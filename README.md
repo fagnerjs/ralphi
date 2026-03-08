@@ -17,7 +17,7 @@ Ralphi can orchestrate:
 
 Use the dashboard when you want the easiest way to pick a provider, configure notifications, review PRDs, define dependencies, choose worktrees, and follow the run in one place.
 
-![Ralphi hero dashboard](docs/media/ralphi-hero.png)
+![Ralphi hero dashboard](https://raw.githubusercontent.com/fagnerjs/ralphi/main/docs/media/ralphi-hero.png)
 
 ---
 
@@ -134,9 +134,9 @@ Typical dashboard flow:
 
 Each project keeps its local runtime data in `./.ralphi/state`, with archived snapshots in `./.ralphi/archive`.
 
-![Ralphi backlog review](docs/media/ralphi-backlog.png)
+![Ralphi backlog review](https://raw.githubusercontent.com/fagnerjs/ralphi/main/docs/media/ralphi-backlog.png)
 
-![Ralphi live run view](docs/media/ralphi-live.png)
+![Ralphi live run view](https://raw.githubusercontent.com/fagnerjs/ralphi/main/docs/media/ralphi-live.png)
 
 ---
 
@@ -549,9 +549,9 @@ From the arcade menu you can:
 
 It is a small quality-of-life feature, but it fits long-running terminal sessions well: you do not need to leave the terminal just because a run is taking a while.
 
-![Ralphi arcade menu](docs/media/ralphi-arcade-select.png)
+![Ralphi arcade menu](https://raw.githubusercontent.com/fagnerjs/ralphi/main/docs/media/ralphi-arcade-select.png)
 
-![Ralphi arcade gameplay](docs/media/ralphi-arcade-game.png)
+![Ralphi arcade gameplay](https://raw.githubusercontent.com/fagnerjs/ralphi/main/docs/media/ralphi-arcade-game.png)
 
 ---
 
