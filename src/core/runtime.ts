@@ -78,6 +78,7 @@ interface ProviderExecutionResult {
   step: string;
   usageTotals: RalphRunSummary['usageTotals'];
   rawOutput: string;
+  timeoutMs: number;
   timedOut: boolean;
   launchError: string | null;
   mcpServers: RalphContextSnapshot['mcpServers'];
@@ -115,6 +116,10 @@ interface GenerateBacklogWithSkillOptions {
   onProgress?: (message: string) => void;
 }
 
+const DEFAULT_PROVIDER_PLANNING_TIMEOUT_MS = 30 * 60 * 1000;
+const DEFAULT_PROVIDER_EXECUTION_TIMEOUT_MS = 30 * 60 * 1000;
+const PROVIDER_TIMEOUT_FORCE_KILL_GRACE_MS = 2000;
+
 function workspaceDirs(ralphDir: string) {
   return {
     stateDir: path.join(ralphDir, 'state'),
@@ -125,6 +130,50 @@ function workspaceDirs(ralphDir: string) {
 
 function backlogPlanPath(runDir: string): string {
   return path.join(runDir, 'plan.json');
+}
+
+function parseTimeoutOverride(rawValue: string | undefined): number | null {
+  if (!rawValue?.trim()) {
+    return null;
+  }
+
+  const parsed = Number(rawValue);
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    return null;
+  }
+
+  return Math.trunc(parsed);
+}
+
+function resolveProviderTimeoutMs(mode: ProviderInvocationMode): number {
+  const sharedOverride = parseTimeoutOverride(process.env.RALPHI_PROVIDER_TIMEOUT_MS);
+  const modeOverride =
+    mode === 'planning'
+      ? parseTimeoutOverride(process.env.RALPHI_PROVIDER_PLANNING_TIMEOUT_MS)
+      : parseTimeoutOverride(process.env.RALPHI_PROVIDER_EXECUTION_TIMEOUT_MS);
+
+  if (modeOverride !== null) {
+    return modeOverride;
+  }
+
+  if (sharedOverride !== null) {
+    return sharedOverride;
+  }
+
+  return mode === 'planning' ? DEFAULT_PROVIDER_PLANNING_TIMEOUT_MS : DEFAULT_PROVIDER_EXECUTION_TIMEOUT_MS;
+}
+
+function formatTimeoutLabel(timeoutMs: number): string {
+  if (timeoutMs < 1000) {
+    return `${Math.max(0, Math.trunc(timeoutMs))}ms`;
+  }
+
+  const totalSeconds = Math.ceil(timeoutMs / 1000);
+  if (totalSeconds % 60 === 0) {
+    return `${totalSeconds / 60}m`;
+  }
+
+  return `${totalSeconds}s`;
 }
 
 export async function isContextPersistedStateComplete(prdJsonPath: string, backlog: BacklogSnapshot | null): Promise<boolean> {
@@ -976,7 +1025,6 @@ async function generateBacklogPlan(options: {
     workspaceDir: options.runDir,
     verbose: options.verbose,
     mode: 'planning',
-    timeoutMs: 180000,
     onOutputLine: line => {
       const next = classifyOutputLine(line);
       if (next && next !== lastProgress) {
@@ -1024,11 +1072,12 @@ export async function runProviderPrompt(options: {
     throw new Error(`Provider "${options.provider}" was not found in PATH.`);
   }
 
+  const mode = options.mode ?? 'execution';
   const invocation = buildProviderInvocation(
     options.provider,
     options.workspaceDir,
     options.verbose ?? false,
-    options.mode ?? 'execution',
+    mode,
     'local'
   );
 
@@ -1048,7 +1097,7 @@ export async function runProviderPrompt(options: {
     let settled = false;
     let expectedEarlyExit = false;
     let stopCheckRunning = false;
-    const timeoutMs = options.timeoutMs;
+    const timeoutMs = typeof options.timeoutMs === 'number' ? options.timeoutMs : resolveProviderTimeoutMs(mode);
     const timeoutHandle =
       typeof timeoutMs === 'number' && timeoutMs > 0
         ? setTimeout(() => {
@@ -1057,7 +1106,12 @@ export async function runProviderPrompt(options: {
             }
             settled = true;
             child.kill('SIGTERM');
-            reject(new Error(`Provider "${options.provider}" timed out after ${Math.ceil(timeoutMs / 1000)}s.`));
+            setTimeout(() => {
+              if (child.exitCode === null && child.signalCode === null) {
+                child.kill('SIGKILL');
+              }
+            }, PROVIDER_TIMEOUT_FORCE_KILL_GRACE_MS).unref();
+            reject(new Error(`Provider "${options.provider}" timed out after ${formatTimeoutLabel(timeoutMs)}.`));
           }, timeoutMs)
         : null;
     const stopCheckInterval =
@@ -1168,7 +1222,6 @@ export async function generateBacklogWithSkill(options: GenerateBacklogWithSkill
     workspaceDir: paths.runDir,
     verbose: options.verbose,
     mode: 'planning',
-    timeoutMs: 180000,
     onOutputLine: line => {
       const next = classifyOutputLine(line);
       if (next && next !== lastProgress) {
@@ -1292,7 +1345,7 @@ async function executeProviderIteration(
   context: InternalContext,
   reporter?: RalphReporter
 ): Promise<ProviderExecutionResult> {
-  const providerTimeoutMs = 30 * 60 * 1000;
+  const providerTimeoutMs = resolveProviderTimeoutMs('execution');
 
   if (config.executionEnvironment === 'devcontainer' && !context.devcontainerReady) {
     await emit(reporter, {
@@ -1334,19 +1387,22 @@ async function executeProviderIteration(
       }
     );
     let settled = false;
-    const timeoutHandle = setTimeout(() => {
-      if (settled) {
-        return;
-      }
+    const timeoutHandle =
+      providerTimeoutMs > 0
+        ? setTimeout(() => {
+            if (settled) {
+              return;
+            }
 
-      timedOut = true;
-      child.kill('SIGTERM');
-      setTimeout(() => {
-        if (!settled) {
-          child.kill('SIGKILL');
-        }
-      }, 2000).unref();
-    }, providerTimeoutMs);
+            timedOut = true;
+            child.kill('SIGTERM');
+            setTimeout(() => {
+              if (!settled) {
+                child.kill('SIGKILL');
+              }
+            }, PROVIDER_TIMEOUT_FORCE_KILL_GRACE_MS).unref();
+          }, providerTimeoutMs)
+        : null;
 
     if (invocation.promptTransport === 'stdin') {
       const promptStream = createReadStream(promptPath);
@@ -1449,7 +1505,9 @@ async function executeProviderIteration(
 
     child.on('error', error => {
       launchError = error.message;
-      clearTimeout(timeoutHandle);
+      if (timeoutHandle) {
+        clearTimeout(timeoutHandle);
+      }
       logStream.end();
       exitCode = 1;
       settled = true;
@@ -1457,7 +1515,9 @@ async function executeProviderIteration(
       void Promise.allSettled(pendingTasks).then(() => resolve());
     });
     child.on('close', code => {
-      clearTimeout(timeoutHandle);
+      if (timeoutHandle) {
+        clearTimeout(timeoutHandle);
+      }
       if (settled) {
         return;
       }
@@ -1482,6 +1542,7 @@ async function executeProviderIteration(
     step: currentStep,
     usageTotals: extractUsageTotalsFromOutput(rawOutput),
     rawOutput,
+    timeoutMs: providerTimeoutMs,
     timedOut,
     launchError,
     mcpServers
@@ -1547,6 +1608,7 @@ async function runIteration(
     step: 'Preparing prompt',
     usageTotals: null,
     rawOutput: '',
+    timeoutMs: resolveProviderTimeoutMs('execution'),
     timedOut: false,
     launchError: null,
     mcpServers: []
@@ -1618,7 +1680,7 @@ async function runIteration(
       failureMessage =
         result.launchError ??
         (result.timedOut
-          ? `Provider timed out after ${Math.ceil((30 * 60 * 1000) / 1000)}s.`
+          ? `Provider timed out after ${formatTimeoutLabel(result.timeoutMs)}.`
           : outputSummary || `Provider exited with code ${result.exitCode}.`);
     }
   } catch (error) {
@@ -2216,7 +2278,6 @@ export async function createPrdDraftFromBrief(
       workspaceDir: prdDir,
       verbose: options.verbose,
       mode: 'planning',
-      timeoutMs: 180000,
       onOutputLine: line => {
         const next = classifyOutputLine(line);
         if (next && next !== lastProgress) {

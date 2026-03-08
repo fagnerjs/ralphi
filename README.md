@@ -325,6 +325,14 @@ You can also choose where the provider runs:
 
 If Ralphi cannot find the provider you selected, run `ralphi doctor` to confirm what is missing.
 
+If your provider needs more time during PRD drafting, plan generation, or backlog generation, you can raise the timeout with environment variables:
+
+- `RALPHI_PROVIDER_PLANNING_TIMEOUT_MS` for planning-style prompts
+- `RALPHI_PROVIDER_EXECUTION_TIMEOUT_MS` for full implementation passes
+- `RALPHI_PROVIDER_TIMEOUT_MS` to override both with one value
+
+The planning and execution defaults are 30 minutes, and `RALPHI_PROVIDER_TIMEOUT_MS` applies the same override to both. Setting any of them to `0` disables that timeout.
+
 ### Provider-local setup
 
 Ralphi works best when it fits into the files and folders your provider already expects.

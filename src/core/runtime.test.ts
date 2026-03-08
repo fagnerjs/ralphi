@@ -198,6 +198,42 @@ test('createPrdDraftFromBrief creates unique markdown drafts and initializes sta
   }
 });
 
+test('createPrdDraftFromBrief respects provider planning timeout overrides', async () => {
+  const fixture = await createTempProject('ralphi-runtime-');
+  const previousPath = process.env.PATH;
+  const previousPlanningTimeout = process.env.RALPHI_PROVIDER_PLANNING_TIMEOUT_MS;
+
+  try {
+    const binDir = path.join(fixture.rootDir, 'bin');
+    const skillDir = path.join(fixture.rootDir, 'skills', 'slow-draft');
+    const skillFile = path.join(skillDir, 'SKILL.md');
+
+    await mkdir(skillDir, { recursive: true });
+    await writeFile(skillFile, '# Slow draft skill\n', 'utf8');
+    await writeExecutable(binDir, 'codex', '#!/usr/bin/env bash\nsleep 2\n');
+
+    process.env.PATH = previousPath ? `${binDir}${path.delimiter}${previousPath}` : binDir;
+    process.env.RALPHI_PROVIDER_PLANNING_TIMEOUT_MS = '100';
+
+    await assert.rejects(
+      createPrdDraftFromBrief(fixture.rootDir, 'Release command center', {
+        skillName: 'slow-draft',
+        skillFilePath: skillFile,
+        provider: 'codex'
+      }),
+      /Provider "codex" timed out after 100ms\./
+    );
+  } finally {
+    process.env.PATH = previousPath;
+    if (previousPlanningTimeout === undefined) {
+      delete process.env.RALPHI_PROVIDER_PLANNING_TIMEOUT_MS;
+    } else {
+      process.env.RALPHI_PROVIDER_PLANNING_TIMEOUT_MS = previousPlanningTimeout;
+    }
+    await fixture.cleanup();
+  }
+});
+
 test('validateProvider rejects missing provider executables and missing devcontainer prerequisites', async () => {
   const fixture = await createTempProject('ralphi-runtime-');
   const previousPath = process.env.PATH;
