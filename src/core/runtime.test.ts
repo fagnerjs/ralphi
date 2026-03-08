@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 
 import {
   buildPlansFromPrds,
@@ -331,6 +331,157 @@ test('isContextPersistedStateComplete requires both story passes and backlog com
     assert.equal(done, false);
     assert.equal(complete, true);
   } finally {
+    await fixture.cleanup();
+  }
+});
+
+test('runRalphi consumes the full configured iteration budget before marking a PRD complete', async () => {
+  const fixture = await createTempProject('ralphi-runtime-');
+  const previousPath = process.env.PATH;
+
+  try {
+    const releasePrd = path.join(fixture.rootDir, 'docs', 'prds', 'release.json');
+    const binDir = path.join(fixture.rootDir, 'bin');
+
+    await writeFile(path.join(fixture.rootDir, 'README.md'), '# Fixture repository\n', 'utf8');
+    await writeJsonFile(releasePrd, {
+      branchName: 'feature/release',
+      userStories: [
+        {
+          id: 'US-001',
+          title: 'Ship the release flow',
+          description: 'Deliver the release flow.',
+          acceptanceCriteria: ['Create release artifacts'],
+          passes: false
+        }
+      ]
+    });
+    await writeFakeCodex(binDir);
+
+    await runGitOk(fixture.rootDir, ['init', '-b', 'main']);
+    await runGitOk(fixture.rootDir, ['config', 'user.name', 'Ralphi Test']);
+    await runGitOk(fixture.rootDir, ['config', 'user.email', 'ralphi@example.com']);
+    await runGitOk(fixture.rootDir, ['add', '.']);
+    await runGitOk(fixture.rootDir, ['commit', '-m', 'chore: seed fixture']);
+
+    process.env.PATH = previousPath ? `${binDir}${path.delimiter}${previousPath}` : binDir;
+
+    const config = makeConfig(fixture.rootDir, {
+      tool: 'codex',
+      plans: [
+        makePlan(releasePrd, {
+          id: 'release',
+          title: 'release',
+          branchName: 'feature/release',
+          iterations: 3
+        })
+      ],
+      maxIterations: 3,
+      schedule: 'per-prd',
+      workspaceStrategy: 'shared'
+    });
+    const events: Array<Record<string, unknown>> = [];
+
+    const summary = await runRalphi(config, async event => {
+      events.push(event as Record<string, unknown>);
+    });
+
+    assert.equal(summary.completed, true);
+    assert.equal(summary.contexts.length, 1);
+    assert.equal(summary.contexts[0]?.done, true);
+    assert.equal(summary.contexts[0]?.iterationsRun, 3);
+    assert.equal(summary.contexts[0]?.iterationHistory.length, 3);
+    assert.equal(events.filter(event => event.type === 'iteration-start').length, 3);
+    assert.deepEqual(
+      events.filter(event => event.type === 'iteration-finish').map(event => event.completed),
+      [false, false, true]
+    );
+
+    const progressLog = await readFile(summary.contexts[0].progressFilePath, 'utf8');
+    assert.equal((progressLog.match(/^- Completed release\.json on /gm) ?? []).length, 3);
+  } finally {
+    process.env.PATH = previousPath;
+    await fixture.cleanup();
+  }
+});
+
+test('runRalphi lets dependent PRDs consume their full budget in round-robin mode', async () => {
+  const fixture = await createTempProject('ralphi-runtime-');
+  const previousPath = process.env.PATH;
+
+  try {
+    const foundationPrd = path.join(fixture.rootDir, 'docs', 'prds', 'foundation.json');
+    const followUpPrd = path.join(fixture.rootDir, 'docs', 'prds', 'follow-up.json');
+    const binDir = path.join(fixture.rootDir, 'bin');
+
+    await writeFile(path.join(fixture.rootDir, 'README.md'), '# Fixture repository\n', 'utf8');
+    await writeJsonFile(foundationPrd, {
+      branchName: 'feature/foundation',
+      userStories: [
+        {
+          id: 'US-001',
+          title: 'Build the foundation',
+          description: 'Create the shared foundation artifact.',
+          acceptanceCriteria: ['Create foundation.txt'],
+          passes: false
+        }
+      ]
+    });
+    await writeJsonFile(followUpPrd, {
+      branchName: 'feature/follow-up',
+      userStories: [
+        {
+          id: 'US-002',
+          title: 'Extend the foundation',
+          description: 'Build the dependent artifact from the foundation baseline.',
+          acceptanceCriteria: ['Create follow-up.txt from the foundation baseline'],
+          passes: false
+        }
+      ]
+    });
+    await writeFakeCodex(binDir);
+
+    await runGitOk(fixture.rootDir, ['init', '-b', 'main']);
+    await runGitOk(fixture.rootDir, ['config', 'user.name', 'Ralphi Test']);
+    await runGitOk(fixture.rootDir, ['config', 'user.email', 'ralphi@example.com']);
+    await runGitOk(fixture.rootDir, ['add', '.']);
+    await runGitOk(fixture.rootDir, ['commit', '-m', 'chore: seed fixture']);
+
+    process.env.PATH = previousPath ? `${binDir}${path.delimiter}${previousPath}` : binDir;
+
+    const config = makeConfig(fixture.rootDir, {
+      tool: 'codex',
+      plans: [
+        makePlan(foundationPrd, {
+          id: 'foundation',
+          title: 'foundation',
+          branchName: 'feature/foundation',
+          iterations: 2
+        }),
+        makePlan(followUpPrd, {
+          id: 'follow-up',
+          title: 'follow-up',
+          branchName: 'feature/follow-up',
+          iterations: 2,
+          dependsOn: 'foundation'
+        })
+      ],
+      maxIterations: 2,
+      schedule: 'round-robin',
+      workspaceStrategy: 'worktree'
+    });
+
+    const summary = await runRalphi(config);
+    const foundationContext = summary.contexts.find(context => context.planId === 'foundation');
+    const followUpContext = summary.contexts.find(context => context.planId === 'follow-up');
+
+    assert.equal(summary.completed, true);
+    assert.equal(foundationContext?.iterationsRun, 2);
+    assert.equal(followUpContext?.iterationsRun, 2);
+    assert.equal(foundationContext?.done, true);
+    assert.equal(followUpContext?.done, true);
+  } finally {
+    process.env.PATH = previousPath;
     await fixture.cleanup();
   }
 });

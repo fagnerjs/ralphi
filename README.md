@@ -116,6 +116,7 @@ Why it works well in practice:
 
 - If Ralphi detects missing recommended project scaffolds, it can guide you through them before launch.
 - Each iteration is a full pass across a PRD backlog, not a budget for a single backlog item.
+- Ralphi consumes the full configured PRD pass budget unless a blocking error stops the run. If implementation finishes early, the remaining passes are used for verification, regression checks, polish, and documentation updates.
 - If the iteration budget ends before the PRD is truly done, Ralphi pauses the run and tells you work is still pending instead of marking it complete.
 - While you are typing in a title, description, or other text field, character shortcuts stay inside the editor so your text is not interrupted.
 

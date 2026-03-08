@@ -221,6 +221,14 @@ function findContextByPlanId(contexts: InternalContext[], planId: string | null 
   return contexts.find(context => context.snapshot.planId === planId) ?? null;
 }
 
+function iterationBudgetConsumed(snapshot: Pick<RalphContextSnapshot, 'iterationsRun' | 'iterationsTarget'>): boolean {
+  return snapshot.iterationsRun >= snapshot.iterationsTarget;
+}
+
+function executionComplete(snapshot: Pick<RalphContextSnapshot, 'done' | 'iterationsRun' | 'iterationsTarget'>): boolean {
+  return snapshot.done && iterationBudgetConsumed(snapshot);
+}
+
 function dependencyReady(config: RalphConfig, context: InternalContext, contexts: InternalContext[]): boolean {
   if (context.snapshot.iterationsRun > 0) {
     return true;
@@ -231,7 +239,7 @@ function dependencyReady(config: RalphConfig, context: InternalContext, contexts
     return true;
   }
 
-  if (!dependency.snapshot.done) {
+  if (!executionComplete(dependency.snapshot)) {
     return false;
   }
 
@@ -343,7 +351,7 @@ async function ensureContextExecutionReady(
 }
 
 async function finalizeContextArtifacts(config: RalphConfig, context: InternalContext, reporter?: RalphReporter): Promise<void> {
-  if (config.workspaceStrategy === 'shared' || !context.snapshot.done || !context.snapshot.worktreePath || context.snapshot.worktreeRemoved) {
+  if (config.workspaceStrategy === 'shared' || !executionComplete(context.snapshot) || !context.snapshot.worktreePath || context.snapshot.worktreeRemoved) {
     return;
   }
 
@@ -428,7 +436,7 @@ async function createFinalMergedBranch(
   contexts: InternalContext[],
   reporter?: RalphReporter
 ): Promise<string | null> {
-  if (config.workspaceStrategy !== 'worktree' || contexts.length < 2 || contexts.some(context => !context.snapshot.done)) {
+  if (config.workspaceStrategy !== 'worktree' || contexts.length < 2 || contexts.some(context => !executionComplete(context.snapshot))) {
     return null;
   }
 
@@ -668,12 +676,17 @@ async function createContext(
   }
   const restoredBacklog = backlog ?? checkpoint?.backlog ?? null;
   const done = await isContextPersistedStateComplete(prdJsonPath, restoredBacklog);
+  const restoredIterationsRun = checkpoint?.iterationsRun ?? 0;
   const activeItemId = restoredBacklog?.activeItemId ?? checkpoint?.activeBacklogItemId ?? null;
   const activeStepId = restoredBacklog?.activeStepId ?? checkpoint?.activeBacklogStepId ?? null;
   const restoredStatus =
     checkpoint?.lastError || checkpoint?.lastFailure
       ? 'blocked'
-      : done
+      : executionComplete({
+            done,
+            iterationsRun: restoredIterationsRun,
+            iterationsTarget: plan.iterations
+          })
         ? 'complete'
         : 'queued';
 
@@ -706,7 +719,7 @@ async function createContext(
       backlog: restoredBacklog,
       status: restoredStatus,
       done,
-      iterationsRun: checkpoint?.iterationsRun ?? 0,
+      iterationsRun: restoredIterationsRun,
       iterationsTarget: plan.iterations,
       lastLogPath: checkpoint?.lastLogPath ?? null,
       activeBacklogItemId: activeItemId,
@@ -730,13 +743,13 @@ function runSessionStatus(contexts: InternalContext[]): 'running' | 'blocked' | 
   const requiresBranchCleanup = contexts.length > 1;
   if (
     contexts.length > 0 &&
-    contexts.every(context => context.snapshot.done) &&
+    contexts.every(context => executionComplete(context.snapshot)) &&
     contexts.every(context => (requiresBranchCleanup ? context.snapshot.branchRemoved || !context.snapshot.branchName : true))
   ) {
     return 'complete';
   }
 
-  if (contexts.some(context => !context.snapshot.done && Boolean(context.snapshot.lastError))) {
+  if (contexts.some(context => !executionComplete(context.snapshot) && Boolean(context.snapshot.lastError))) {
     return 'blocked';
   }
 
@@ -1719,7 +1732,7 @@ async function runIteration(
   if (failure) {
     context.snapshot.done = false;
     context.snapshot.status = 'blocked';
-  } else if (context.snapshot.done) {
+  } else if (executionComplete(context.snapshot)) {
     context.snapshot.done = true;
     context.snapshot.status = 'complete';
   } else {
@@ -1752,7 +1765,7 @@ async function runIteration(
       usageTotals: result.usageTotals,
       mcpServers: result.mcpServers,
       failure,
-      completed: context.snapshot.done
+      completed: executionComplete(context.snapshot)
     }
   ];
 
@@ -1782,7 +1795,7 @@ async function runIteration(
     durationMs: result.durationMs,
     lineCount: result.lineCount,
     exitCode: result.exitCode,
-    completed: context.snapshot.done
+    completed: executionComplete(context.snapshot)
   });
 
   await saveContextCheckpoint({ ...context.snapshot });
@@ -1798,12 +1811,14 @@ async function runRoundRobin(
   preparedWorkspace: PreparedWorkspace
 ): Promise<void> {
   const orderedContexts = orderContextsByDependency(contexts);
-  const totalWaves = Math.max(...orderedContexts.map(context => context.snapshot.iterationsTarget), 0);
+  const totalWaves = orderedContexts.reduce((sum, context) => sum + Math.max(context.snapshot.iterationsTarget, 0), 0);
 
   for (let wave = 1; wave <= totalWaves; wave += 1) {
-    if (orderedContexts.every(context => context.snapshot.done || context.snapshot.iterationsRun >= context.snapshot.iterationsTarget)) {
+    if (orderedContexts.every(context => iterationBudgetConsumed(context.snapshot))) {
       return;
     }
+
+    let progressed = false;
 
     await emit(reporter, {
       type: 'wave-start',
@@ -1812,7 +1827,7 @@ async function runRoundRobin(
     });
 
     for (const context of orderedContexts) {
-      if (context.snapshot.done || context.snapshot.iterationsRun >= context.snapshot.iterationsTarget) {
+      if (iterationBudgetConsumed(context.snapshot)) {
         continue;
       }
 
@@ -1830,6 +1845,7 @@ async function runRoundRobin(
       });
 
       const prdIteration = context.snapshot.iterationsRun + 1;
+      progressed = true;
       await runIteration(
         config,
         context,
@@ -1842,6 +1858,10 @@ async function runRoundRobin(
       );
       await finalizeContextArtifacts(config, context, reporter);
       await saveRunSession(config.ralphDir, config, runSessionStatus(contexts));
+    }
+
+    if (!progressed) {
+      return;
     }
   }
 }
@@ -1867,7 +1887,7 @@ async function runPerPrd(
       sourcePrd: context.snapshot.sourcePrd
     });
 
-    while (!context.snapshot.done && context.snapshot.iterationsRun < context.snapshot.iterationsTarget) {
+    while (context.snapshot.iterationsRun < context.snapshot.iterationsTarget) {
       if (!dependencyReady(config, context, contexts)) {
         await markContextWaitingForDependency(context, contexts, reporter);
         break;
@@ -1908,9 +1928,13 @@ async function runParallel(
         sourcePrd: context.snapshot.sourcePrd
       });
 
-      while (!context.snapshot.done && context.snapshot.iterationsRun < context.snapshot.iterationsTarget) {
+      while (context.snapshot.iterationsRun < context.snapshot.iterationsTarget) {
         if (!dependencyReady(config, context, contexts)) {
           await markContextWaitingForDependency(context, contexts, reporter);
+          const dependency = findContextByPlanId(contexts, context.snapshot.dependsOnPlanId);
+          if (dependency && iterationBudgetConsumed(dependency.snapshot) && !executionComplete(dependency.snapshot)) {
+            break;
+          }
           await delay(250);
           continue;
         }
@@ -1996,7 +2020,7 @@ async function applyGitPreflight(
 
   for (const context of contexts) {
     context.snapshot.workspaceDir = config.rootDir;
-    context.snapshot.status = context.snapshot.done ? 'complete' : 'queued';
+    context.snapshot.status = executionComplete(context.snapshot) ? 'complete' : 'queued';
   }
 }
 
@@ -2182,7 +2206,7 @@ export async function runRalphi(config: RalphConfig, reporter?: RalphReporter): 
 
     await finalizeCompletedContexts(config, contexts, reporter);
     let finalBranchName: string | null = null;
-    if (contexts.length > 1 && contexts.every(context => context.snapshot.done)) {
+    if (contexts.length > 1 && contexts.every(context => executionComplete(context.snapshot))) {
       finalBranchName = await createFinalMergedBranch(config, contexts, reporter);
       if (finalBranchName) {
         await cleanupExecutionBranches(config, contexts, reporter);
@@ -2191,15 +2215,15 @@ export async function runRalphi(config: RalphConfig, reporter?: RalphReporter): 
     await cleanupRemainingProvisionedSkills(contexts, reporter);
 
     for (const context of contexts) {
-      if (context.snapshot.done) {
+      if (executionComplete(context.snapshot)) {
         context.snapshot.status = 'complete';
-      } else if (context.snapshot.iterationsRun >= context.snapshot.iterationsTarget) {
+      } else if (iterationBudgetConsumed(context.snapshot)) {
         context.snapshot.status = context.snapshot.lastError ? 'blocked' : 'queued';
       }
     }
 
     const summary: RalphRunSummary = {
-      completed: contexts.every(context => context.snapshot.done) && (contexts.length <= 1 || Boolean(finalBranchName)),
+      completed: contexts.every(context => executionComplete(context.snapshot)) && (contexts.length <= 1 || Boolean(finalBranchName)),
       tool: config.tool,
       schedule: config.schedule,
       maxIterations: Math.max(...contexts.map(context => context.snapshot.iterationsTarget), 0),

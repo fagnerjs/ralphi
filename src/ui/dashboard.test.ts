@@ -8,11 +8,14 @@ import {
   buildSummaryPauseReason,
   buildRunSummaryText,
   classifySignalTone,
+  completedEarly,
   createInitialDashboardState,
   dashboardReducer,
+  formatContextIterations,
+  orderContextsForQueue,
   resolveContextUsageTotals
 } from './dashboard.js';
-import { createTempProject, makeConfig, makeContextSnapshot, makeRunSummary, makeUsageTotals } from '../test-support.js';
+import { createTempProject, makeConfig, makeContextSnapshot, makePlan, makeRunSummary, makeUsageTotals } from '../test-support.js';
 
 test('dashboardReducer adds a start notification when execution is prepared', async () => {
   const fixture = await createTempProject('ralphi-dashboard-');
@@ -30,6 +33,83 @@ test('dashboardReducer adds a start notification when execution is prepared', as
     assert.equal(next.notifications.length, 1);
     assert.equal(next.notifications[0]?.title, 'Execution started');
     assert.match(next.notifications[0]?.body ?? '', /1 PRD workstream prepared/);
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+test('orderContextsForQueue follows the configured execution order', async () => {
+  const fixture = await createTempProject('ralphi-dashboard-');
+
+  try {
+    const foundationPrd = path.join(fixture.rootDir, 'docs', 'prds', 'foundation.md');
+    const releasePrd = path.join(fixture.rootDir, 'docs', 'prds', 'release.md');
+    const polishPrd = path.join(fixture.rootDir, 'docs', 'prds', 'polish.md');
+    const config = makeConfig(fixture.rootDir, {
+      plans: [
+        makePlan(releasePrd, {
+          id: 'release',
+          title: 'release',
+          dependsOn: 'foundation'
+        }),
+        makePlan(foundationPrd, {
+          id: 'foundation',
+          title: 'foundation'
+        }),
+        makePlan(polishPrd, {
+          id: 'polish',
+          title: 'polish'
+        })
+      ]
+    });
+    const ordered = orderContextsForQueue(
+      [
+        makeContextSnapshot(config, {
+          index: 0,
+          planId: 'release',
+          sourcePrd: releasePrd,
+          title: 'release',
+          dependsOnPlanId: 'foundation'
+        }),
+        makeContextSnapshot(config, {
+          index: 1,
+          planId: 'foundation',
+          sourcePrd: foundationPrd,
+          title: 'foundation'
+        }),
+        makeContextSnapshot(config, {
+          index: 2,
+          planId: 'polish',
+          sourcePrd: polishPrd,
+          title: 'polish'
+        })
+      ],
+      config.plans
+    );
+
+    assert.deepEqual(
+      ordered.map(context => context.planId),
+      ['foundation', 'release', 'polish']
+    );
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+test('formatContextIterations explains when a PRD completed before the configured limit', async () => {
+  const fixture = await createTempProject('ralphi-dashboard-');
+
+  try {
+    const config = makeConfig(fixture.rootDir);
+    const context = makeContextSnapshot(config, {
+      done: true,
+      status: 'complete',
+      iterationsRun: 2,
+      iterationsTarget: 3
+    });
+
+    assert.equal(completedEarly(context), true);
+    assert.equal(formatContextIterations(context), '2/3 used · completed early');
   } finally {
     await fixture.cleanup();
   }

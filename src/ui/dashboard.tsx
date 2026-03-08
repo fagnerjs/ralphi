@@ -4,11 +4,22 @@ import React, { startTransition, useEffect, useMemo, useReducer, useRef, useStat
 import { Box, render, Text, useApp, useInput } from 'ink';
 import { Badge, ProgressBar, Spinner, ThemeProvider } from '@inkjs/ui';
 
+import { sortPlansByDependencies } from '../core/dependencies.js';
 import { failureCategoryLabel } from '../core/failure.js';
 import { createGitPullRequest } from '../core/git.js';
 import { runRalphi } from '../core/runtime.js';
 import { prepareContextRetry } from '../core/session.js';
-import type { BacklogStatus, BacklogStep, DoctorReport, GitValidation, RalphConfig, RalphContextSnapshot, RalphEvent, RalphRunSummary } from '../core/types.js';
+import type {
+  BacklogStatus,
+  BacklogStep,
+  DoctorReport,
+  GitValidation,
+  RalphConfig,
+  RalphContextSnapshot,
+  RalphEvent,
+  RalphPrdPlan,
+  RalphRunSummary
+} from '../core/types.js';
 import { aggregateUsageTotals, buildCompactUsageSummary, buildUsageDisplayRows, hasUsageTotals } from '../core/usage.js';
 import { displayPath, pickScheduleLabel, truncateEnd, truncateMiddle } from '../core/utils.js';
 import { ArcadeCabinet } from './arcade.js';
@@ -76,6 +87,62 @@ export function createInitialDashboardState(): DashboardState {
     projectConfigPath: null,
     notifications: []
   };
+}
+
+function resolveQueuePlanIds(plans: RalphPrdPlan[]): string[] {
+  try {
+    return sortPlansByDependencies(plans).map(plan => plan.id);
+  } catch {
+    return plans.map(plan => plan.id);
+  }
+}
+
+function compareQueueOrder(
+  leftPlanId: string,
+  rightPlanId: string,
+  orderIndex: Map<string, number>,
+  leftFallback: number,
+  rightFallback: number
+): number {
+  const leftOrder = orderIndex.get(leftPlanId);
+  const rightOrder = orderIndex.get(rightPlanId);
+
+  if (leftOrder !== undefined || rightOrder !== undefined) {
+    if (leftOrder === undefined) {
+      return 1;
+    }
+
+    if (rightOrder === undefined) {
+      return -1;
+    }
+
+    if (leftOrder !== rightOrder) {
+      return leftOrder - rightOrder;
+    }
+  }
+
+  return leftFallback - rightFallback;
+}
+
+function orderPlansForQueue(plans: RalphPrdPlan[]): RalphPrdPlan[] {
+  const orderIndex = new Map(resolveQueuePlanIds(plans).map((planId, index) => [planId, index] as const));
+  const fallbackIndex = new Map(plans.map((plan, index) => [plan.id, index] as const));
+
+  return [...plans].sort((left, right) =>
+    compareQueueOrder(
+      left.id,
+      right.id,
+      orderIndex,
+      fallbackIndex.get(left.id) ?? 0,
+      fallbackIndex.get(right.id) ?? 0
+    )
+  );
+}
+
+export function orderContextsForQueue(contexts: RalphContextSnapshot[], plans: RalphPrdPlan[]): RalphContextSnapshot[] {
+  const orderIndex = new Map(resolveQueuePlanIds(plans).map((planId, index) => [planId, index] as const));
+
+  return [...contexts].sort((left, right) => compareQueueOrder(left.planId, right.planId, orderIndex, left.index, right.index));
 }
 
 function pushLimited<T>(items: T[], value: T, limit: number): T[] {
@@ -347,7 +414,7 @@ function pushNotification(
 }
 
 export function buildRunSummaryText(summary: RalphRunSummary): string {
-  const completed = summary.contexts.filter(context => context.done).length;
+  const completed = summary.contexts.filter(context => isContextComplete(context)).length;
   const commits = summary.contexts.filter(context => Boolean(context.commitSha)).length;
   const pending = Math.max(0, summary.contexts.length - completed);
   const usageSummary = buildCompactUsageSummary(
@@ -364,7 +431,7 @@ export function buildRunSummaryText(summary: RalphRunSummary): string {
 }
 
 export function buildContextPauseReason(context: RalphContextSnapshot | null | undefined): string | null {
-  if (!context || context.done) {
+  if (!context || isContextComplete(context)) {
     return null;
   }
 
@@ -389,7 +456,7 @@ export function buildSummaryPauseReason(summary: RalphRunSummary): string | null
     return buildContextPauseReason(summary.contexts[0]);
   }
 
-  const pendingContexts = summary.contexts.filter(context => !context.done);
+  const pendingContexts = summary.contexts.filter(context => !isContextComplete(context));
   const blocked = pendingContexts.filter(context => Boolean(context.lastFailure?.summary ?? context.lastError)).length;
   const iterationLimited = pendingContexts.filter(
     context =>
@@ -414,12 +481,29 @@ export function buildSummaryPauseReason(summary: RalphRunSummary): string | null
   return parts.join('; ');
 }
 
+export function completedEarly(context: RalphContextSnapshot | null | undefined): boolean {
+  if (!context || !isContextComplete(context)) {
+    return false;
+  }
+
+  return context.iterationsTarget > 0 && context.iterationsRun < context.iterationsTarget;
+}
+
+export function formatContextIterations(context: RalphContextSnapshot | null | undefined): string {
+  if (!context) {
+    return 'n/a';
+  }
+
+  const progress = `${context.iterationsRun}/${context.iterationsTarget}`;
+  return completedEarly(context) ? `${progress} used · completed early` : progress;
+}
+
 function buildRunCompletionStatus(summary: RalphRunSummary): string {
   if (summary.completed) {
     return 'All tasks complete';
   }
 
-  const pendingContexts = summary.contexts.filter(context => !context.done);
+  const pendingContexts = summary.contexts.filter(context => !isContextComplete(context));
   if (pendingContexts.length === 1) {
     const pendingContext = pendingContexts[0];
     if (pendingContext && !pendingContext.lastFailure && !pendingContext.lastError && pendingContext.iterationsTarget > 0 && pendingContext.iterationsRun >= pendingContext.iterationsTarget) {
@@ -715,7 +799,7 @@ export function dashboardReducer(state: DashboardState, action: DashboardAction)
 
 function statusBadge(context: RalphContextSnapshot): { color: 'green' | 'yellow' | 'red' | 'blue'; label: string } {
   if (isContextComplete(context)) {
-    return { color: 'green', label: 'done' };
+    return { color: 'green', label: completedEarly(context) ? 'done early' : 'done' };
   }
 
   if (context.status === 'running') {
@@ -730,7 +814,7 @@ function statusBadge(context: RalphContextSnapshot): { color: 'green' | 'yellow'
 }
 
 function isContextComplete(context: RalphContextSnapshot): boolean {
-  return context.done || context.status === 'complete';
+  return context.status === 'complete' || (context.done && context.iterationsRun >= context.iterationsTarget);
 }
 
 function contextProgressValue(context: RalphContextSnapshot): number {
@@ -830,9 +914,11 @@ function DashboardApp({ config, onExit }: { config: RalphConfig; onExit: (result
     };
   }, [config]);
 
+  const orderedPlans = useMemo(() => orderPlansForQueue(config.plans), [config.plans]);
+  const orderedContexts = useMemo(() => orderContextsForQueue(state.contexts, config.plans), [config.plans, state.contexts]);
   const visibleContexts = useMemo(
-    () => state.contexts.filter(context => !closedPlanIds.has(context.planId)),
-    [closedPlanIds, state.contexts]
+    () => orderedContexts.filter(context => !closedPlanIds.has(context.planId)),
+    [closedPlanIds, orderedContexts]
   );
 
   useEffect(() => {
@@ -858,7 +944,7 @@ function DashboardApp({ config, onExit }: { config: RalphConfig; onExit: (result
   );
   const runUsageRows = useMemo(() => buildUsageDisplayRows(runUsage), [runUsage]);
   const runCompletionRows = useMemo(() => {
-    const completed = resolvedSummary.contexts.filter(context => context.done).length;
+    const completed = resolvedSummary.contexts.filter(context => isContextComplete(context)).length;
     const commits = resolvedSummary.contexts.filter(context => Boolean(context.commitSha)).length;
     const pending = Math.max(0, resolvedSummary.contexts.length - completed);
     const pauseReason = buildSummaryPauseReason(resolvedSummary);
@@ -1097,7 +1183,7 @@ function DashboardApp({ config, onExit }: { config: RalphConfig; onExit: (result
           'Created by Ralphi.',
           '',
           `Source PRD: ${displayPath(activeContext.sourcePrd, config.rootDir)}`,
-          `Iterations: ${activeContext.iterationsRun}/${activeContext.iterationsTarget}`,
+          `Iterations: ${formatContextIterations(activeContext)}`,
           `Stories: ${activeContext.storyProgress}`,
           `Backlog: ${activeContext.backlogProgress}`,
           `Log path: ${activeContext.lastLogPath ? displayPath(activeContext.lastLogPath, config.rootDir) : 'n/a'}`
@@ -1247,7 +1333,7 @@ function DashboardApp({ config, onExit }: { config: RalphConfig; onExit: (result
         <Box marginTop={1} flexGrow={1} flexShrink={1}>
           <SectionPanel title="Queue" subtitle={`${completedCount}/${state.contexts.length || config.plans.length}`} width={sidebarWidth} flexGrow={1}>
             {visibleContexts.length === 0
-              ? (state.contexts.length === 0 ? config.plans : state.contexts)
+              ? (state.contexts.length === 0 ? orderedPlans : orderedContexts)
                   .filter(contextOrPlan => !closedPlanIds.has('planId' in contextOrPlan ? contextOrPlan.planId : contextOrPlan.id))
                   .map((contextOrPlan, index) => {
                     const isContext = 'planId' in contextOrPlan;
@@ -1279,11 +1365,12 @@ function DashboardApp({ config, onExit }: { config: RalphConfig; onExit: (result
       closedPlanIds,
       completedCount,
       config,
+      orderedContexts,
+      orderedPlans,
       selectedPane,
       sidebarLabelWidth,
       sidebarValueWidth,
       sidebarWidth,
-      state.contexts,
       visibleContexts
     ]
   );
@@ -1491,7 +1578,7 @@ function DashboardApp({ config, onExit }: { config: RalphConfig; onExit: (result
                   <Box marginTop={1} flexDirection="column">
                     <LabelValue label="Workspace" value={activeWorkspaceLabel} valueWidth={detailValueWidth} />
                     <LabelValue label="Base ref" value={activeContext.baseRef ?? 'HEAD'} valueWidth={detailValueWidth} />
-                    <LabelValue label="Iterations" value={`${activeContext.iterationsRun}/${activeContext.iterationsTarget}`} valueWidth={detailValueWidth} />
+                    <LabelValue label="Iterations" value={formatContextIterations(activeContext)} valueWidth={detailValueWidth} />
                     <LabelValue label="Last run" value={activeIterationLabel} valueWidth={detailValueWidth} />
                     <LabelValue label="Stories" value={activeContext.storyProgress} valueWidth={detailValueWidth} />
                     <LabelValue label="Backlog" value={activeContext.backlogProgress} valueWidth={detailValueWidth} />

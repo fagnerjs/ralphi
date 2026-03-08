@@ -106,6 +106,7 @@ Execution rules:
 - Use the local \`ralphi-worktree\` skill whenever you need to reason about isolated worktrees, branch hygiene, or shared orchestration state.
 - Make code changes only inside ${workspaceLabel}. Treat the state files in ${runDirPath} as shared orchestration state.
 ${dependencyRules}- Treat this pass as one complete PRD pass across the backlog, not as a budget for only one backlog item.
+- Consume the full configured PRD pass budget. If the backlog is already complete before the final configured pass, use the remaining pass(es) for verification, regression checks, polish, and documentation updates instead of exiting early.
 - Work through enabled backlog items in order. When you finish one item, continue to the next incomplete enabled item in the same pass whenever safe progress remains.
 - Skip backlog items or steps marked \`disabled\`. Keep the pass pragmatic and verifiable, but do not stop after a single backlog item if more safe work remains.
 - Update ${prdJsonPath} after implementation. Completed stories must be marked with \`passes: true\` and concise \`notes\`.
@@ -117,8 +118,8 @@ ${dependencyRules}- Treat this pass as one complete PRD pass across the backlog,
 - Run the most relevant checks from the acceptance criteria when feasible.
 - Prefer existing repository patterns and avoid reverting unrelated user changes.
 - Treat ${runDirPath} as the persistent state directory for this PRD.
-- When all user stories are complete, end the final response with exactly <promise>COMPLETE</promise>.
-- If anything remains, do not output that token.
+- Emit exactly <promise>COMPLETE</promise> only when all user stories are complete and this is the final configured PRD pass.
+- If anything remains, or if this is not the final configured pass yet, do not output that token.
 
 Use the following skill inventory and workflow rules for this run.
 

@@ -530,7 +530,7 @@ function collectManagedBranches(
     remember(
       checkpoint.branch,
       checkpoint.sourcePrd,
-      checkpoint.done
+      checkpoint.status === 'complete'
         ? 'Execution branch retained after a previous Ralphi run.'
         : 'Execution branch still referenced by a saved Ralphi checkpoint.'
     );
@@ -866,7 +866,7 @@ function buildManagedWorktreeEntry(
     };
   }
 
-  if (gitEntry && existsOnDisk && checkpoint && !checkpoint.worktreeRemoved && !checkpoint.done) {
+  if (gitEntry && existsOnDisk && checkpoint && !checkpoint.worktreeRemoved && checkpoint.status !== 'complete') {
     return {
       path: gitEntry.path,
       branch: gitEntry.branch,
@@ -911,7 +911,7 @@ function buildManagedWorktreeEntry(
     };
   }
 
-  if (checkpoint?.done && existsOnDisk) {
+  if (checkpoint?.status === 'complete' && existsOnDisk) {
     return {
       path: targetPath,
       branch: gitEntry?.branch ?? null,
@@ -947,8 +947,8 @@ function buildManagedWorktreeEntry(
       branch: null,
       existsOnDisk,
       registeredWithGit: false,
-      state: checkpoint && !checkpoint.done ? 'blocking' : 'warning',
-      reason: checkpoint && !checkpoint.done
+      state: checkpoint && checkpoint.status !== 'complete' ? 'blocking' : 'warning',
+      reason: checkpoint && checkpoint.status !== 'complete'
         ? 'Checkpoint still points to this worktree, but Git no longer tracks it.'
         : 'Orphaned directory inside the managed Ralphi worktree root.',
       sourcePrd: checkpoint?.sourcePrd ?? null,
