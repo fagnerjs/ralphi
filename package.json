@@ -1,0 +1,56 @@
+{
+  "name": "ralphi",
+  "version": "0.1.0",
+  "description": "Neon terminal runner for long-lived PRD execution loops.",
+  "type": "module",
+  "license": "MIT",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "bin": {
+    "ralphi": "./dist/cli.js",
+    "ralph": "./dist/cli.js"
+  },
+  "exports": {
+    ".": "./dist/index.js"
+  },
+  "files": [
+    "dist",
+    "skills",
+    "docs",
+    "README.md",
+    "ralphi.sh"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "npm run build && node --test $(find dist -name '*.test.js' -print)",
+    "test:integration": "npm run build && node --test $(find dist -name '*.integration.test.js' -print)",
+    "docs:media": "node ./scripts/generate-docs-media.mjs",
+    "dev": "tsx src/cli.tsx",
+    "start": "node dist/cli.js",
+    "prepack": "npm run build && npm run docs:media",
+    "prepublishOnly": "npm run typecheck && npm run build && npm run docs:media"
+  },
+  "keywords": [
+    "cli",
+    "ink",
+    "terminal",
+    "automation",
+    "agents"
+  ],
+  "dependencies": {
+    "@inkjs/ui": "^2.0.0",
+    "ink": "^6.8.0",
+    "ink-gradient": "^4.0.0",
+    "react": "^19.2.4"
+  },
+  "devDependencies": {
+    "@types/node": "^25.3.5",
+    "@types/react": "^19.2.14",
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3"
+  }
+}
