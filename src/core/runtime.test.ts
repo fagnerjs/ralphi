@@ -96,6 +96,7 @@ async function writeFakeCodex(binDir: string): Promise<string> {
     '',
     "  fs.appendFileSync(progressFilePath, '\\n- Completed ' + prdName + ' on ' + branchName + '\\n', 'utf8');",
     "  console.log('<ralphi-backlog item=\"BT-001\" step=\"ST-001-01\" status=\"done\">');",
+    "  console.log('Usage summary · input tokens 1,200 · cached input tokens 100 · output tokens 320 · total tokens 1,620 · spend $0.42');",
     "  console.log('<promise>COMPLETE</promise>');",
     '})().catch(error => {',
     "  console.error(error instanceof Error ? error.stack || error.message : String(error));",
@@ -399,6 +400,69 @@ test('runRalphi consumes the full configured iteration budget before marking a P
 
     const progressLog = await readFile(summary.contexts[0].progressFilePath, 'utf8');
     assert.equal((progressLog.match(/^- Completed release\.json on /gm) ?? []).length, 3);
+  } finally {
+    process.env.PATH = previousPath;
+    await fixture.cleanup();
+  }
+});
+
+test('runRalphi tracks provider usage totals and emits live usage updates', async () => {
+  const fixture = await createTempProject('ralphi-runtime-');
+  const previousPath = process.env.PATH;
+
+  try {
+    const releasePrd = path.join(fixture.rootDir, 'docs', 'prds', 'release.json');
+    const binDir = path.join(fixture.rootDir, 'bin');
+
+    await writeFile(path.join(fixture.rootDir, 'README.md'), '# Fixture repository\n', 'utf8');
+    await writeJsonFile(releasePrd, {
+      branchName: 'feature/release',
+      userStories: [
+        {
+          id: 'US-001',
+          title: 'Ship the release flow',
+          description: 'Deliver the release flow.',
+          acceptanceCriteria: ['Create release artifacts'],
+          passes: false
+        }
+      ]
+    });
+    await writeFakeCodex(binDir);
+
+    await runGitOk(fixture.rootDir, ['init', '-b', 'main']);
+    await runGitOk(fixture.rootDir, ['config', 'user.name', 'Ralphi Test']);
+    await runGitOk(fixture.rootDir, ['config', 'user.email', 'ralphi@example.com']);
+    await runGitOk(fixture.rootDir, ['add', '.']);
+    await runGitOk(fixture.rootDir, ['commit', '-m', 'chore: seed fixture']);
+
+    process.env.PATH = previousPath ? `${binDir}${path.delimiter}${previousPath}` : binDir;
+
+    const config = makeConfig(fixture.rootDir, {
+      tool: 'codex',
+      plans: [
+        makePlan(releasePrd, {
+          id: 'release',
+          title: 'release',
+          branchName: 'feature/release',
+          iterations: 1
+        })
+      ],
+      maxIterations: 1,
+      schedule: 'per-prd',
+      workspaceStrategy: 'shared'
+    });
+    const events: Array<Record<string, unknown>> = [];
+
+    const summary = await runRalphi(config, async event => {
+      events.push(event as Record<string, unknown>);
+    });
+
+    const usageUpdates = events.filter(event => event.type === 'usage-update');
+    assert.equal(usageUpdates.length > 0, true);
+    assert.equal(summary.contexts[0]?.usageTotals?.totalTokens, 1620);
+    assert.equal(summary.contexts[0]?.usageTotals?.totalCostUsd, 0.42);
+    assert.equal(summary.usageTotals?.totalTokens, 1620);
+    assert.equal(summary.usageTotals?.totalCostUsd, 0.42);
   } finally {
     process.env.PATH = previousPath;
     await fixture.cleanup();

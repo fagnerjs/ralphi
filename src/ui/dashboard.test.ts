@@ -150,6 +150,39 @@ test('dashboardReducer turns error boot logs into actionable notifications', asy
   }
 });
 
+test('dashboardReducer applies usage-update to the active context in real time', async () => {
+  const fixture = await createTempProject('ralphi-dashboard-');
+
+  try {
+    const config = makeConfig(fixture.rootDir);
+    const context = makeContextSnapshot(config, {
+      usageTotals: null,
+      status: 'running'
+    });
+    const usageTotals = makeUsageTotals({
+      totalTokens: 2450,
+      totalCostUsd: 0.91
+    });
+    const seeded = {
+      ...createInitialDashboardState(),
+      phase: 'running' as const,
+      contexts: [context],
+      activeContextIndex: 0
+    };
+
+    const next = dashboardReducer(seeded, {
+      type: 'usage-update',
+      contextIndex: 0,
+      usageTotals
+    });
+
+    assert.deepEqual(next.contexts[0]?.usageTotals, usageTotals);
+    assert.equal(next.activeContextIndex, 0);
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
 test('dashboardReducer summarizes completion with success notifications and usage totals', async () => {
   const fixture = await createTempProject('ralphi-dashboard-');
 

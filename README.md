@@ -2,6 +2,8 @@
 
 Ralphi is an **Autonomous AI coding loop** for PRD-driven execution. It helps you launch, monitor, and steer long-running coding work from a terminal dashboard.
 
+![Ralphi hero dashboard](https://raw.githubusercontent.com/fagnerjs/ralphi/main/docs/media/ralphi-hero.png)
+
 It is built for teams and solo builders who work from PRDs and want a calmer way to run autonomous coding sessions across one or many workstreams.
 
 Ralphi can orchestrate:
@@ -16,8 +18,6 @@ Ralphi can orchestrate:
 - `qwen`
 
 Use the dashboard when you want the easiest way to pick a provider, configure notifications, review PRDs, define dependencies, choose worktrees, and follow the run in one place.
-
-![Ralphi hero dashboard](https://raw.githubusercontent.com/fagnerjs/ralphi/main/docs/media/ralphi-hero.png)
 
 ---
 

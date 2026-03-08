@@ -3,6 +3,7 @@ import { copyFile, cp, readFile, readdir, rm, stat, unlink, writeFile } from 'no
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
+import os from 'node:os';
 import path from 'node:path';
 
 import { applyBacklogMarker, ensureBacklog, isBacklogComplete, loadBacklog, refreshBacklog, resetBacklogProgress, saveBacklogSnapshot } from './backlog.js';
@@ -38,7 +39,15 @@ import type {
   RalphReporter,
   RalphRunSummary
 } from './types.js';
-import { aggregateUsageTotals, extractUsageTotalsFromOutput, mergeUsageTotals } from './usage.js';
+import { observeProviderOutputLine } from './provider-output.js';
+import {
+  aggregateUsageTotals,
+  createUsageTracker,
+  extractUsageTotalsFromOutput,
+  fillUsageTotals,
+  mergeUsageTotals,
+  usageTotalsEqual
+} from './usage.js';
 import {
   backlogProgressLabel,
   classifyOutputLine,
@@ -841,6 +850,10 @@ function buildProviderInvocation(
 
   switch (tool) {
     case 'amp':
+      if (mode === 'execution') {
+        env.NO_COLOR = '1';
+        return wrapInvocation('amp', ['--dangerously-allow-all', '--stream-json'], 'stdin');
+      }
       if (verbose) {
         env.FORCE_COLOR = '1';
         env.CLICOLOR_FORCE = '1';
@@ -850,6 +863,10 @@ function buildProviderInvocation(
       }
       return wrapInvocation('amp', ['--dangerously-allow-all'], 'stdin');
     case 'claude':
+      if (mode === 'execution') {
+        env.NO_COLOR = '1';
+        return wrapInvocation('claude', ['--dangerously-skip-permissions', '--print', '--output-format', 'stream-json'], 'stdin');
+      }
       if (verbose) {
         env.FORCE_COLOR = '1';
         env.CLICOLOR_FORCE = '1';
@@ -859,9 +876,12 @@ function buildProviderInvocation(
       }
       return wrapInvocation('claude', ['--dangerously-skip-permissions', '--print'], 'stdin');
     case 'codex': {
-      const codexArgs = ['exec', '--dangerously-bypass-approvals-and-sandbox', '--color', verbose ? 'always' : 'never'];
+      const codexArgs = ['exec', '--dangerously-bypass-approvals-and-sandbox', '--color', mode === 'execution' ? 'never' : verbose ? 'always' : 'never'];
       if (mode === 'planning') {
         codexArgs.push('--ephemeral');
+      }
+      if (mode === 'execution') {
+        codexArgs.push('--json');
       }
       codexArgs.push('-C', workspaceArg, '-');
       return wrapInvocation('codex', codexArgs, 'stdin');
@@ -877,6 +897,150 @@ function buildProviderInvocation(
     case 'qwen':
       return wrapInvocation('qwen', ['--output-format', 'stream-json', '--approval-mode', 'yolo', '-p'], 'arg');
   }
+}
+
+interface CommandCaptureResult {
+  exitCode: number;
+  stdout: string;
+  stderr: string;
+}
+
+async function runCommandCapture(
+  command: string,
+  args: string[],
+  cwd: string,
+  env: NodeJS.ProcessEnv
+): Promise<CommandCaptureResult> {
+  return new Promise(resolve => {
+    const child = spawn(command, args, {
+      cwd,
+      env,
+      stdio: ['ignore', 'pipe', 'pipe']
+    });
+    let stdout = '';
+    let stderr = '';
+
+    child.stdout.on('data', (chunk: Buffer) => {
+      stdout += chunk.toString('utf8');
+    });
+
+    child.stderr.on('data', (chunk: Buffer) => {
+      stderr += chunk.toString('utf8');
+    });
+
+    child.on('error', error => {
+      resolve({
+        exitCode: 1,
+        stdout,
+        stderr: stderr ? `${stderr}
+${error.message}` : error.message
+      });
+    });
+
+    child.on('close', code => {
+      resolve({
+        exitCode: code ?? 1,
+        stdout,
+        stderr
+      });
+    });
+  });
+}
+
+async function findNewestMatchingFile(
+  rootDir: string,
+  predicate: (candidatePath: string) => boolean,
+  maxDepth = 5
+): Promise<string | null> {
+  if (!(await pathExists(rootDir))) {
+    return null;
+  }
+
+  let best: { path: string; mtimeMs: number } | null = null;
+
+  const walk = async (currentDir: string, depth: number): Promise<void> => {
+    const entries = await readdir(currentDir, { withFileTypes: true }).catch(() => []);
+
+    await Promise.all(
+      entries.map(async entry => {
+        const candidatePath = path.join(currentDir, entry.name);
+        if (entry.isDirectory()) {
+          if (depth < maxDepth) {
+            await walk(candidatePath, depth + 1);
+          }
+          return;
+        }
+
+        if (!entry.isFile() || !predicate(candidatePath)) {
+          return;
+        }
+
+        const candidateStat = await stat(candidatePath).catch(() => null);
+        if (!candidateStat) {
+          return;
+        }
+
+        if (!best || candidateStat.mtimeMs > best.mtimeMs) {
+          best = {
+            path: candidatePath,
+            mtimeMs: candidateStat.mtimeMs
+          };
+        }
+      })
+    );
+  };
+
+  await walk(rootDir, 0);
+  const resolvedBest = best as { path: string; mtimeMs: number } | null;
+  return resolvedBest ? resolvedBest.path : null;
+}
+
+async function findCodexRolloutPath(threadId: string): Promise<string | null> {
+  const sessionsRoot = path.join(os.homedir(), '.codex', 'sessions');
+  return findNewestMatchingFile(
+    sessionsRoot,
+    candidatePath => candidatePath.endsWith('.jsonl') && path.basename(candidatePath).includes(threadId),
+    6
+  );
+}
+
+async function readCodexRolloutUsageTotals(
+  threadId: string,
+  cachedPath: string | null
+): Promise<{ usageTotals: RalphRunSummary['usageTotals']; rolloutPath: string | null }> {
+  const rolloutPath = cachedPath ?? (await findCodexRolloutPath(threadId));
+  if (!rolloutPath) {
+    return {
+      usageTotals: null,
+      rolloutPath: null
+    };
+  }
+
+  const content = await readFile(rolloutPath, 'utf8').catch(() => null);
+  return {
+    usageTotals: content ? extractUsageTotalsFromOutput(content, 'codex') : null,
+    rolloutPath
+  };
+}
+
+async function exportOpencodeUsageTotals(
+  config: RalphConfig,
+  context: InternalContext,
+  sessionId: string
+): Promise<RalphRunSummary['usageTotals']> {
+  const env = { ...process.env };
+  const command = config.executionEnvironment === 'devcontainer' ? 'devcontainer' : 'opencode';
+  const args =
+    config.executionEnvironment === 'devcontainer'
+      ? ['exec', '--workspace-folder', context.snapshot.workspaceDir, 'opencode', 'export', sessionId]
+      : ['export', sessionId];
+
+  const result = await runCommandCapture(command, args, context.snapshot.workspaceDir, env);
+  if (result.exitCode !== 0 || !result.stdout.trim()) {
+    return null;
+  }
+
+  return extractUsageTotalsFromOutput(result.stdout, 'opencode');
 }
 
 function summarizeProviderOutput(output: string, lines = 12): string {
@@ -1373,6 +1537,8 @@ async function executeProviderIteration(
 
   const invocation = buildProviderInvocation(config.tool, context.snapshot.workspaceDir, config.verbose, 'execution', config.executionEnvironment);
   const startTime = Date.now();
+  const baseUsageTotals = context.snapshot.usageTotals;
+  const usageTracker = createUsageTracker(config.tool);
   const logStream = createWriteStream(logPath, { flags: 'w' });
   let lineCount = 0;
   let sawComplete = false;
@@ -1385,11 +1551,79 @@ async function executeProviderIteration(
   let timedOut = false;
   let launchError: string | null = null;
   let mcpServers: RalphContextSnapshot['mcpServers'] = [];
+  let iterationUsageTotals: RalphRunSummary['usageTotals'] = null;
+  let codexThreadId: string | null = null;
+  let codexRolloutPath: string | null = null;
+  let opencodeSessionId: string | null = null;
+  let pendingUsageRefresh: Promise<void> | null = null;
 
   const promptInput = invocation.promptTransport === 'arg' ? await readFile(promptPath, 'utf8') : null;
+  const pendingTasks: Array<Promise<unknown>> = [];
+
+  const updateUsageTotals = (nextUsageTotals: RalphRunSummary['usageTotals']): void => {
+    if (usageTotalsEqual(iterationUsageTotals, nextUsageTotals)) {
+      return;
+    }
+
+    iterationUsageTotals = nextUsageTotals;
+    const mergedUsageTotals = mergeUsageTotals(baseUsageTotals, nextUsageTotals);
+    if (usageTotalsEqual(context.snapshot.usageTotals, mergedUsageTotals)) {
+      return;
+    }
+
+    context.snapshot.usageTotals = mergedUsageTotals;
+    pendingTasks.push(
+      emit(reporter, {
+        type: 'usage-update',
+        contextIndex: context.snapshot.index,
+        usageTotals: mergedUsageTotals
+      })
+    );
+  };
+
+  const refreshUsageFromSidecars = async (): Promise<void> => {
+    let sidecarUsageTotals: RalphRunSummary['usageTotals'] = null;
+
+    if (config.tool === 'codex' && codexThreadId) {
+      const { usageTotals, rolloutPath } = await readCodexRolloutUsageTotals(codexThreadId, codexRolloutPath).catch(() => ({
+        usageTotals: null,
+        rolloutPath: codexRolloutPath
+      }));
+      codexRolloutPath = rolloutPath;
+      sidecarUsageTotals = fillUsageTotals(usageTotals, sidecarUsageTotals);
+    }
+
+    if (config.tool === 'opencode' && opencodeSessionId) {
+      const usageTotals = await exportOpencodeUsageTotals(config, context, opencodeSessionId).catch(() => null);
+      sidecarUsageTotals = fillUsageTotals(usageTotals, sidecarUsageTotals);
+    }
+
+    if (!sidecarUsageTotals) {
+      return;
+    }
+
+    updateUsageTotals(fillUsageTotals(sidecarUsageTotals, usageTracker.getTotals()));
+  };
+
+  const queueUsageRefresh = (): void => {
+    const canRefresh = (config.tool === 'codex' && Boolean(codexThreadId)) || (config.tool === 'opencode' && Boolean(opencodeSessionId));
+    if (!canRefresh || pendingUsageRefresh) {
+      return;
+    }
+
+    const task = refreshUsageFromSidecars()
+      .catch(() => undefined)
+      .finally(() => {
+        if (pendingUsageRefresh === task) {
+          pendingUsageRefresh = null;
+        }
+      });
+
+    pendingUsageRefresh = task;
+    pendingTasks.push(task);
+  };
 
   await new Promise<void>(resolve => {
-    const pendingTasks: Array<Promise<unknown>> = [];
     const child = spawn(
       invocation.command,
       invocation.promptTransport === 'arg' ? [...invocation.args, promptInput ?? ''] : invocation.args,
@@ -1433,15 +1667,50 @@ async function executeProviderIteration(
 
       lastCheckpointAt = now;
       linesSinceCheckpoint = 0;
+      queueUsageRefresh();
       pendingTasks.push(saveContextCheckpoint({ ...context.snapshot }).catch(() => undefined));
     };
 
-    const handleLine = (line: string): void => {
+    const handleBacklogMarker = (line: string): void => {
+      const marker = extractBacklogMarker(line);
+      if (!marker) {
+        return;
+      }
+
+      const backlog = applyBacklogMarker(context.snapshot.backlog, marker);
+      if (!backlog) {
+        return;
+      }
+
+      context.snapshot.backlog = backlog;
+      context.snapshot.backlogProgress = backlogProgressLabel(backlog);
+      context.snapshot.activeBacklogItemId = marker.itemId ?? backlog.activeItemId;
+      context.snapshot.activeBacklogStepId = marker.stepId ?? backlog.activeStepId;
+      pendingTasks.push(
+        saveBacklogSnapshot(
+          context.snapshot.backlogPath,
+          context.snapshot.sourcePrd,
+          context.snapshot.branchName ?? path.basename(context.snapshot.sourcePrd),
+          backlog
+        ).catch(() => undefined)
+      );
+      pendingTasks.push(
+        emit(reporter, {
+          type: 'backlog-update',
+          contextIndex: context.snapshot.index,
+          backlog,
+          itemId: context.snapshot.activeBacklogItemId,
+          stepId: context.snapshot.activeBacklogStepId
+        })
+      );
+      scheduleCheckpoint(true);
+    };
+
+    const handleProcessedLine = (line: string, renderLine: boolean): void => {
       if (!line) {
         return;
       }
 
-      lineCount += 1;
       if (line.includes('<promise>COMPLETE</promise>')) {
         sawComplete = true;
       }
@@ -1452,45 +1721,47 @@ async function executeProviderIteration(
         context.snapshot.mcpServers = mcpServers;
       }
 
-      const marker = extractBacklogMarker(line);
-      if (marker) {
-        const backlog = applyBacklogMarker(context.snapshot.backlog, marker);
-        if (backlog) {
-          context.snapshot.backlog = backlog;
-          context.snapshot.backlogProgress = backlogProgressLabel(backlog);
-          context.snapshot.activeBacklogItemId = marker.itemId ?? backlog.activeItemId;
-          context.snapshot.activeBacklogStepId = marker.stepId ?? backlog.activeStepId;
-          pendingTasks.push(
-            saveBacklogSnapshot(
-              context.snapshot.backlogPath,
-              context.snapshot.sourcePrd,
-              context.snapshot.branchName ?? path.basename(context.snapshot.sourcePrd),
-              backlog
-            ).catch(() => undefined)
-          );
-          pendingTasks.push(
-            emit(reporter, {
-              type: 'backlog-update',
-              contextIndex: context.snapshot.index,
-              backlog,
-              itemId: context.snapshot.activeBacklogItemId,
-              stepId: context.snapshot.activeBacklogStepId
-            })
-          );
-          scheduleCheckpoint(true);
-        }
-      }
-
+      handleBacklogMarker(line);
       currentStep = classifyOutputLine(line);
       context.snapshot.lastStep = currentStep;
-      pendingTasks.push(
-        emit(reporter, {
-          type: 'iteration-output',
-          contextIndex: context.snapshot.index,
-          line,
-          step: currentStep
-        })
-      );
+
+      if (renderLine) {
+        pendingTasks.push(
+          emit(reporter, {
+            type: 'iteration-output',
+            contextIndex: context.snapshot.index,
+            line,
+            step: currentStep
+          })
+        );
+      }
+    };
+
+    const handleLine = (line: string): void => {
+      if (!line) {
+        return;
+      }
+
+      lineCount += 1;
+      const observedUsageTotals = usageTracker.observeLine(line);
+      updateUsageTotals(observedUsageTotals);
+
+      const outputObservation = observeProviderOutputLine(config.tool, line);
+      if (outputObservation.threadId && outputObservation.threadId !== codexThreadId) {
+        codexThreadId = outputObservation.threadId;
+        queueUsageRefresh();
+      }
+      if (outputObservation.sessionId && outputObservation.sessionId !== opencodeSessionId) {
+        opencodeSessionId = outputObservation.sessionId;
+        queueUsageRefresh();
+      }
+
+      const linesToProcess = outputObservation.displayLines.length > 0 ? outputObservation.displayLines : [line.trim()];
+      const renderLines = outputObservation.displayLines.length > 0 || !outputObservation.isStructured;
+      for (const processedLine of linesToProcess) {
+        handleProcessedLine(processedLine, renderLines);
+      }
+
       scheduleCheckpoint();
     };
 
@@ -1527,6 +1798,7 @@ async function executeProviderIteration(
       pendingTasks.push(saveContextCheckpoint({ ...context.snapshot }).catch(() => undefined));
       void Promise.allSettled(pendingTasks).then(() => resolve());
     });
+
     child.on('close', code => {
       if (timeoutHandle) {
         clearTimeout(timeoutHandle);
@@ -1547,13 +1819,17 @@ async function executeProviderIteration(
     });
   });
 
+  await refreshUsageFromSidecars().catch(() => undefined);
+  const finalUsageTotals = fillUsageTotals(iterationUsageTotals, extractUsageTotalsFromOutput(rawOutput, config.tool));
+  updateUsageTotals(finalUsageTotals);
+
   return {
     durationMs: Date.now() - startTime,
     exitCode,
     lineCount,
     sawComplete,
     step: currentStep,
-    usageTotals: extractUsageTotalsFromOutput(rawOutput),
+    usageTotals: finalUsageTotals,
     rawOutput,
     timeoutMs: providerTimeoutMs,
     timedOut,
@@ -1673,6 +1949,7 @@ async function runIteration(
       phaseLabel: trackLabel
     });
 
+    const startingUsageTotals = context.snapshot.usageTotals;
     result = await executeProviderIteration(config, promptTempPath, logPath, context, reporter);
     context.snapshot.iterationsRun = prdIteration;
     context.snapshot.lastLogPath = logPath;
@@ -1680,7 +1957,7 @@ async function runIteration(
     context.snapshot.lastPromptPreviewPath = promptArtifacts.previewPath;
     context.snapshot.lastPromptSourcesPath = promptArtifacts.sourcesPath;
     context.snapshot.mcpServers = result.mcpServers;
-    context.snapshot.usageTotals = mergeUsageTotals(context.snapshot.usageTotals, result.usageTotals);
+    context.snapshot.usageTotals = mergeUsageTotals(startingUsageTotals, result.usageTotals);
 
     try {
       await refreshContext(context);

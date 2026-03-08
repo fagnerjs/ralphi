@@ -396,6 +396,11 @@ export type RalphEvent =
       step: string;
     }
   | {
+      type: 'usage-update';
+      contextIndex: number;
+      usageTotals: RalphUsageTotals | null;
+    }
+  | {
       type: 'iteration-finish';
       context: RalphContextSnapshot;
       prdIteration: number;

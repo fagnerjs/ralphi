@@ -20,7 +20,14 @@ import type {
   RalphPrdPlan,
   RalphRunSummary
 } from '../core/types.js';
-import { aggregateUsageTotals, buildCompactUsageSummary, buildUsageDisplayRows, hasUsageTotals } from '../core/usage.js';
+import {
+  aggregateUsageTotals,
+  buildCompactUsageSummary,
+  buildTokensUsedLabel,
+  buildUsageDisplayRows,
+  formatUsageTokenTotal,
+  hasUsageTotals
+} from '../core/usage.js';
 import { displayPath, pickScheduleLabel, truncateEnd, truncateMiddle } from '../core/utils.js';
 import { ArcadeCabinet } from './arcade.js';
 import { AsciiLogo, HintLine, LabelValue, SectionPanel, SystemTabs, WindowFrame } from './components.js';
@@ -728,6 +735,23 @@ function applyEvent(state: DashboardState, event: RalphEvent): DashboardState {
         nextOutputId: cleanLine ? state.nextOutputId + 1 : state.nextOutputId
       };
     }
+    case 'usage-update': {
+      const nextContexts = [...state.contexts];
+      const context = nextContexts[event.contextIndex];
+      if (!context) {
+        return state;
+      }
+
+      nextContexts[event.contextIndex] = {
+        ...context,
+        usageTotals: event.usageTotals
+      };
+
+      return {
+        ...state,
+        contexts: nextContexts
+      };
+    }
     case 'iteration-finish': {
       const nextContexts = [...state.contexts];
       nextContexts[event.context.index] = event.context;
@@ -942,7 +966,7 @@ function DashboardApp({ config, onExit }: { config: RalphConfig; onExit: (result
       aggregateUsageTotals(state.contexts.map(context => resolveContextUsageTotals(context))),
     [resolvedSummary, state.contexts]
   );
-  const runUsageRows = useMemo(() => buildUsageDisplayRows(runUsage), [runUsage]);
+  const runTokensUsedValue = useMemo(() => formatUsageTokenTotal(runUsage), [runUsage]);
   const runCompletionRows = useMemo(() => {
     const completed = resolvedSummary.contexts.filter(context => isContextComplete(context)).length;
     const commits = resolvedSummary.contexts.filter(context => Boolean(context.commitSha)).length;
@@ -978,8 +1002,9 @@ function DashboardApp({ config, onExit }: { config: RalphConfig; onExit: (result
   const activeIterationLabel = latestIteration
     ? `exit ${latestIteration.exitCode} · ${latestIteration.lineCount} lines · ${(latestIteration.durationMs / 1000).toFixed(1)}s`
     : 'awaiting first iteration';
-  const activeUsageRows = useMemo(
-    () => buildUsageDisplayRows(activeUsage).filter(row => row.label === 'Tokens' || row.label === 'Spend'),
+  const activeTokensUsedValue = useMemo(() => formatUsageTokenTotal(activeUsage), [activeUsage]);
+  const activeSpendRows = useMemo(
+    () => buildUsageDisplayRows(activeUsage).filter(row => row.label === 'Spend'),
     [activeUsage]
   );
   const activeCompletionRows = useMemo(() => {
@@ -1461,9 +1486,7 @@ function DashboardApp({ config, onExit }: { config: RalphConfig; onExit: (result
                       }
                       valueWidth={detailValueWidth}
                     />
-                    {runUsageRows.map(row => (
-                      <LabelValue key={`overview-usage-${row.label}`} label={row.label} value={row.value} valueWidth={detailValueWidth} />
-                    ))}
+                    <LabelValue label="Tokens Used" value={runTokensUsedValue ?? 'pending'} valueWidth={detailValueWidth} />
                   </Box>
                 </SectionPanel>
 
@@ -1489,16 +1512,21 @@ function DashboardApp({ config, onExit }: { config: RalphConfig; onExit: (result
                       {visibleContexts.length === 0 ? (
                         <Text color={palette.dim}>Contexts will appear after bootstrapping finishes.</Text>
                       ) : (
-                        visibleContexts.slice(-overviewQueueLineLimit).map(context => (
-                          <Box key={context.planId} justifyContent="space-between">
-                            <Text color={palette.text} wrap="truncate-middle">
-                              {truncateMiddle(context.title, overviewQueueTitleWidth)}
-                            </Text>
-                            <Text color={palette.dim} wrap="truncate-end">
-                              {truncateEnd(context.backlogProgress, overviewQueueDetailWidth)}
-                            </Text>
-                          </Box>
-                        ))
+                        visibleContexts.slice(-overviewQueueLineLimit).map(context => {
+                          const tokensUsedLabel = buildTokensUsedLabel(resolveContextUsageTotals(context));
+                          const detailLabel = `${context.backlogProgress}${tokensUsedLabel ? ` (${tokensUsedLabel})` : ''}`;
+
+                          return (
+                            <Box key={context.planId} justifyContent="space-between">
+                              <Text color={palette.text} wrap="truncate-middle">
+                                {truncateMiddle(context.title, overviewQueueTitleWidth)}
+                              </Text>
+                              <Text color={palette.dim} wrap="truncate-end">
+                                {truncateEnd(detailLabel, overviewQueueDetailWidth)}
+                              </Text>
+                            </Box>
+                          );
+                        })
                       )}
                     </SectionPanel>
                   </Box>
@@ -1590,6 +1618,7 @@ function DashboardApp({ config, onExit }: { config: RalphConfig; onExit: (result
                       value={activeContext.lastPromptPreviewPath ? displayPath(activeContext.lastPromptPreviewPath, config.rootDir) : 'awaiting prompt'}
                       valueWidth={detailValueWidth}
                     />
+                    <LabelValue label="Tokens Used" value={activeTokensUsedValue ?? 'pending'} valueWidth={detailValueWidth} />
                     {activeContext.lastFailure ? (
                       <LabelValue
                         label="Failure"
@@ -1598,7 +1627,7 @@ function DashboardApp({ config, onExit }: { config: RalphConfig; onExit: (result
                       />
                     ) : null}
                     {activeMcpSummary ? <LabelValue label="MCP" value={activeMcpSummary} valueWidth={detailValueWidth} /> : null}
-                    {activeUsageRows.map(row => (
+                    {activeSpendRows.map(row => (
                       <LabelValue key={`context-usage-${row.label}`} label={row.label} value={row.value} valueWidth={detailValueWidth} />
                     ))}
                   </Box>

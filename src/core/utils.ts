@@ -231,7 +231,11 @@ export interface BacklogMarker {
 }
 
 export function extractBacklogMarker(line: string): BacklogMarker | null {
-  const match = line.match(/<ralphi-backlog([^>]*)>/i);
+  const normalizedLine = line
+    .split(String.raw`\u003c`).join('<')
+    .split(String.raw`\u003e`).join('>')
+    .split(String.raw`\"`).join('"');
+  const match = normalizedLine.match(/<ralphi-backlog([^>]*)>/i);
   if (!match) {
     return null;
   }
