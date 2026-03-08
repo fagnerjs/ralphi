@@ -76,15 +76,15 @@ function defaultSummary(category: RalphFailureCategory): string {
 function recoveryHint(category: RalphFailureCategory, rawLogPath: string | null): string {
   switch (category) {
     case 'provider_launch':
-      return 'Install or repair the provider CLI, rerun `ralph doctor`, then resume.';
+      return 'Install or repair the provider CLI, rerun `ralphi doctor`, then resume.';
     case 'provider_runtime':
       return rawLogPath ? `Inspect ${rawLogPath}, fix the provider error, then retry once or resume.` : 'Inspect the provider log, fix the error, then retry once or resume.';
     case 'timeout':
       return rawLogPath ? `Inspect ${rawLogPath}, reduce scope if needed, then retry once.` : 'Inspect the provider log, reduce scope if needed, then retry once.';
     case 'git':
-      return 'Fix the Git/worktree state first. Use `ralph worktree doctor` if cleanup looks suspicious.';
+      return 'Fix the Git/worktree state first. Use `ralphi worktree doctor` if cleanup looks suspicious.';
     case 'skill':
-      return 'Fix the missing skill root or project config, rerun `ralph doctor`, then resume.';
+      return 'Fix the missing skill root or project config, rerun `ralphi doctor`, then resume.';
     case 'invalid_output':
       return 'Inspect the prompt and raw log, correct the malformed output path, then restart or regenerate state.';
     case 'mcp_startup':

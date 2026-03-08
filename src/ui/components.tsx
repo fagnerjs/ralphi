@@ -184,7 +184,7 @@ export function ChoiceRow({
 }: {
   active: boolean;
   label: string;
-  description: string;
+  description?: string;
   marker?: string;
 }) {
   return (
@@ -197,11 +197,13 @@ export function ChoiceRow({
           </Text>
         </Box>
       </Box>
-      <Box marginLeft={3} flexShrink={1}>
-        <Text color={palette.dim} wrap="truncate-end">
-          {description}
-        </Text>
-      </Box>
+      {description ? (
+        <Box marginLeft={3} flexShrink={1}>
+          <Text color={palette.dim} wrap="truncate-end">
+            {description}
+          </Text>
+        </Box>
+      ) : null}
     </Box>
   );
 }

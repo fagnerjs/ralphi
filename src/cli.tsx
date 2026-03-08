@@ -59,7 +59,7 @@ Usage:
   ralphi file1,file2 [options]
 
 Legacy local wrapper:
-  ./ralph/ralphi.sh --wizard
+  ./ralphi.sh --wizard
 
 Options:
   --tool amp|claude|codex|copilot|cursor|gemini|opencode|qwen

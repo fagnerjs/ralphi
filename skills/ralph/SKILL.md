@@ -1,33 +1,35 @@
 ---
 name: ralph
-description: "Convert PRDs to prd.json format for the Ralph autonomous agent system. Use when you have an existing PRD and need to convert it to Ralph's JSON format. Triggers on: convert this prd, turn this into ralph format, create prd.json from this, ralph json."
+description: "Transform an existing PRD into the `prd.json` structure used by Ralph. Use when a feature spec already exists and needs to be turned into Ralph's JSON execution format. Triggers on: convert this prd, turn this into ralph format, create prd.json from this, ralph json."
 user-invocable: true
 ---
 
-# Ralph PRD Converter
+# Ralph JSON Converter
 
-Converts existing PRDs to the prd.json format that Ralph uses for autonomous execution.
-
----
-
-## The Job
-
-Take a PRD (markdown file or text) and convert it to `prd.json` in your ralph directory.
+Turn an existing PRD into the `prd.json` document Ralph uses to drive autonomous execution.
 
 ---
 
-## Output Format
+## Goal
+
+Take a PRD in Markdown or plain text and produce `prd.json` inside the Ralph workspace.
+
+---
+
+## Required Output Shape
+
+Use this structure:
 
 ```json
 {
   "project": "[Project Name]",
   "branchName": "ralph/[feature-name-kebab-case]",
-  "description": "[Feature description from PRD title/intro]",
+  "description": "[Short feature summary based on the PRD]",
   "userStories": [
     {
       "id": "US-001",
       "title": "[Story title]",
-      "description": "As a [user], I want [feature] so that [benefit]",
+      "description": "As a [user], I want [capability] so that [benefit]",
       "acceptanceCriteria": [
         "Criterion 1",
         "Criterion 2",
@@ -43,106 +45,117 @@ Take a PRD (markdown file or text) and convert it to `prd.json` in your ralph di
 
 ---
 
-## Story Size: The Number One Rule
+## Most Important Rule: Keep Stories Small
 
-**Each story must be completable in ONE Ralph iteration (one context window).**
+Every story must fit within a single Ralph iteration.
 
-Ralph spawns a fresh Amp instance per iteration with no memory of previous work. If a story is too big, the LLM runs out of context before finishing and produces broken code.
+Ralph starts each iteration with a fresh Amp session. If a story spans too much code or too many concerns, the model is likely to lose context and leave the work incomplete.
 
-### Right-sized stories:
-- Add a database column and migration
-- Add a UI component to an existing page
-- Update a server action with new logic
-- Add a filter dropdown to a list
+### Good story sizes
+- Add one database field plus its migration
+- Add one focused backend behavior
+- Add one UI element to an existing screen
+- Add one filter or control to an existing list
 
-### Too big (split these):
-- "Build the entire dashboard" - Split into: schema, queries, UI components, filters
-- "Add authentication" - Split into: schema, middleware, login UI, session handling
-- "Refactor the API" - Split into one story per endpoint or pattern
+### Stories that are too large
+Break down items like these:
+- "Build the whole dashboard"
+- "Add authentication"
+- "Refactor the API"
 
-**Rule of thumb:** If you cannot describe the change in 2-3 sentences, it is too big.
+Instead, split them into smaller steps such as schema work, backend logic, UI pieces, and follow-up interactions.
 
----
-
-## Story Ordering: Dependencies First
-
-Stories execute in priority order. Earlier stories must not depend on later ones.
-
-**Correct order:**
-1. Schema/database changes (migrations)
-2. Server actions / backend logic
-3. UI components that use the backend
-4. Dashboard/summary views that aggregate data
-
-**Wrong order:**
-1. UI component (depends on schema that does not exist yet)
-2. Schema change
+**Practical rule:** if the change cannot be explained clearly in 2-3 sentences, split it further.
 
 ---
 
-## Acceptance Criteria: Must Be Verifiable
+## Order Stories by Dependency
 
-Each criterion must be something Ralph can CHECK, not something vague.
+Ralph executes stories according to priority. Earlier work must unlock later work, not depend on it.
 
-### Good criteria (verifiable):
-- "Add `status` column to tasks table with default 'pending'"
-- "Filter dropdown has options: All, Active, Completed"
-- "Clicking delete shows confirmation dialog"
+### Preferred order
+1. Database or schema changes
+2. Backend or server-side behavior
+3. UI work that depends on the backend
+4. Summary, reporting, or aggregation views
+
+### Avoid this pattern
+1. UI story that assumes missing backend or schema support
+2. Supporting backend/schema story that should have come first
+
+---
+
+## Acceptance Criteria Must Be Checkable
+
+Write criteria Ralph can verify directly.
+
+### Strong acceptance criteria
+- "Add `status` column to tasks table with default `pending`"
+- "Status filter shows All, Active, and Completed"
+- "Delete action opens a confirmation dialog"
 - "Typecheck passes"
 - "Tests pass"
 
-### Bad criteria (vague):
+### Weak acceptance criteria
 - "Works correctly"
-- "User can do X easily"
-- "Good UX"
-- "Handles edge cases"
+- "Easy to use"
+- "Looks good"
+- "Handles edge cases well"
 
-### Always include as final criterion:
+### Always include
+Every story must end with:
+
 ```
 "Typecheck passes"
 ```
 
-For stories with testable logic, also include:
+### Include when the story has testable logic
+Add:
+
 ```
 "Tests pass"
 ```
 
-### For stories that change UI, also include:
+### Include when the story changes UI
+Add:
+
 ```
 "Verify in browser using dev-browser skill"
 ```
 
-Frontend stories are NOT complete until visually verified. Ralph will use the dev-browser skill to navigate to the page, interact with the UI, and confirm changes work.
+UI changes are not considered complete until visually checked with the browser skill.
 
 ---
 
 ## Conversion Rules
 
-1. **Each user story becomes one JSON entry**
-2. **IDs**: Sequential (US-001, US-002, etc.)
-3. **Priority**: Based on dependency order, then document order
-4. **All stories**: `passes: false` and empty `notes`
-5. **branchName**: Derive from feature name, kebab-case, prefixed with `ralph/`
-6. **Always add**: "Typecheck passes" to every story's acceptance criteria
+Follow these rules every time:
+
+1. Each user story becomes one item in `userStories`
+2. Story IDs are sequential: `US-001`, `US-002`, and so on
+3. `priority` reflects dependency order first, then source order
+4. Every story starts with `passes: false` and `notes: ""`
+5. `branchName` is derived from the feature name in kebab-case and prefixed with `ralph/`
+6. Add `Typecheck passes` to every story even if the source PRD omitted it
 
 ---
 
-## Splitting Large PRDs
+## How To Split Large PRDs
 
-If a PRD has big features, split them:
+If the PRD describes a large feature, convert it into multiple focused stories.
 
-**Original:**
-> "Add user notification system"
+**Example input idea:**
+> "Add a notification system"
 
-**Split into:**
-1. US-001: Add notifications table to database
-2. US-002: Create notification service for sending notifications
-3. US-003: Add notification bell icon to header
-4. US-004: Create notification dropdown panel
-5. US-005: Add mark-as-read functionality
-6. US-006: Add notification preferences page
+**Possible split:**
+1. Create notifications table and persistence model
+2. Add service for creating and delivering notifications
+3. Add notification entry point in the header
+4. Add notification panel or dropdown
+5. Add mark-as-read behavior
+6. Add notification settings screen
 
-Each is one focused change that can be completed and verified independently.
+Each story should represent one coherent change Ralph can finish and verify in a single pass.
 
 ---
 
@@ -150,31 +163,31 @@ Each is one focused change that can be completed and verified independently.
 
 **Input PRD:**
 ```markdown
-# Task Status Feature
+# Issue Priority Controls
 
-Add ability to mark tasks with different statuses.
+Let users assign and view issue priority levels.
 
 ## Requirements
-- Toggle between pending/in-progress/done on task list
-- Filter list by status
-- Show status badge on each task
-- Persist status in database
+- Persist priority in storage
+- Show priority badge in issue rows
+- Allow changing priority from the issue details view
+- Filter issues by priority
 ```
 
-**Output prd.json:**
+**Output `prd.json`:**
 ```json
 {
-  "project": "TaskApp",
-  "branchName": "ralph/task-status",
-  "description": "Task Status Feature - Track task progress with status indicators",
+  "project": "IssueTracker",
+  "branchName": "ralph/issue-priority-controls",
+  "description": "Issue Priority Controls - Add persistent priority levels with filtering and UI indicators",
   "userStories": [
     {
       "id": "US-001",
-      "title": "Add status field to tasks table",
-      "description": "As a developer, I need to store task status in the database.",
+      "title": "Add priority field to issue storage",
+      "description": "As a developer, I need issue priority stored persistently.",
       "acceptanceCriteria": [
-        "Add status column: 'pending' | 'in_progress' | 'done' (default 'pending')",
-        "Generate and run migration successfully",
+        "Add priority field with values 'low' | 'medium' | 'high' and default 'medium'",
+        "Migration runs successfully",
         "Typecheck passes"
       ],
       "priority": 1,
@@ -183,11 +196,11 @@ Add ability to mark tasks with different statuses.
     },
     {
       "id": "US-002",
-      "title": "Display status badge on task cards",
-      "description": "As a user, I want to see task status at a glance.",
+      "title": "Show priority badge in issue rows",
+      "description": "As a user, I want to see issue priority at a glance.",
       "acceptanceCriteria": [
-        "Each task card shows colored status badge",
-        "Badge colors: gray=pending, blue=in_progress, green=done",
+        "Each issue row shows a visible priority badge",
+        "Badge colors clearly distinguish low, medium, and high priority",
         "Typecheck passes",
         "Verify in browser using dev-browser skill"
       ],
@@ -197,12 +210,12 @@ Add ability to mark tasks with different statuses.
     },
     {
       "id": "US-003",
-      "title": "Add status toggle to task list rows",
-      "description": "As a user, I want to change task status directly from the list.",
+      "title": "Change priority from issue details",
+      "description": "As a user, I want to update issue priority from the details screen.",
       "acceptanceCriteria": [
-        "Each row has status dropdown or toggle",
-        "Changing status saves immediately",
-        "UI updates without page refresh",
+        "Issue details screen includes a priority control",
+        "Saving a new priority persists immediately",
+        "Updated priority is reflected in the UI without a full reload",
         "Typecheck passes",
         "Verify in browser using dev-browser skill"
       ],
@@ -212,11 +225,11 @@ Add ability to mark tasks with different statuses.
     },
     {
       "id": "US-004",
-      "title": "Filter tasks by status",
-      "description": "As a user, I want to filter the list to see only certain statuses.",
+      "title": "Filter issues by priority",
+      "description": "As a user, I want to narrow the list by priority level.",
       "acceptanceCriteria": [
-        "Filter dropdown: All | Pending | In Progress | Done",
-        "Filter persists in URL params",
+        "Priority filter includes All, Low, Medium, and High options",
+        "Selected filter changes the visible issue list correctly",
         "Typecheck passes",
         "Verify in browser using dev-browser skill"
       ],
@@ -230,29 +243,29 @@ Add ability to mark tasks with different statuses.
 
 ---
 
-## Archiving Previous Runs
+## Archive Existing Runs First
 
-**Before writing a new prd.json, check if there is an existing one from a different feature:**
+Before replacing an existing `prd.json`, check whether it belongs to a different feature.
 
 1. Read the current `prd.json` if it exists
-2. Check if `branchName` differs from the new feature's branch name
-3. If different AND `progress.txt` has content beyond the header:
-   - Create archive folder: `archive/YYYY-MM-DD-feature-name/`
-   - Copy current `prd.json` and `progress.txt` to archive
-   - Reset `progress.txt` with fresh header
+2. Compare its `branchName` with the new branch name
+3. If the branch name is different and `progress.txt` contains more than its initial header:
+   - Create `archive/YYYY-MM-DD-feature-name/`
+   - Copy the current `prd.json` and `progress.txt` into that archive folder
+   - Reset `progress.txt` with a fresh header
 
-**The ralphi.sh script handles this automatically** when you run it, but if you are manually updating prd.json between runs, archive first.
+`ralphi.sh` already handles this automatically during normal runs. This step matters when the JSON is being updated manually between runs.
 
 ---
 
-## Checklist Before Saving
+## Final Checklist
 
-Before writing prd.json, verify:
+Before saving `prd.json`, confirm that:
 
-- [ ] **Previous run archived** (if prd.json exists with different branchName, archive it first)
-- [ ] Each story is completable in one iteration (small enough)
-- [ ] Stories are ordered by dependency (schema to backend to UI)
-- [ ] Every story has "Typecheck passes" as criterion
-- [ ] UI stories have "Verify in browser using dev-browser skill" as criterion
-- [ ] Acceptance criteria are verifiable (not vague)
+- [ ] A previous run was archived when required
+- [ ] Every story is small enough for one Ralph iteration
+- [ ] Stories are ordered by dependency
+- [ ] Every story includes `Typecheck passes`
+- [ ] UI stories include `Verify in browser using dev-browser skill`
+- [ ] Acceptance criteria are observable and specific
 - [ ] No story depends on a later story

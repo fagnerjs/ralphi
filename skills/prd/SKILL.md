@@ -1,241 +1,248 @@
 ---
 name: prd
-description: "Generate a Product Requirements Document (PRD) for a new feature. Use when planning a feature, starting a new project, or when asked to create a PRD. Triggers on: create a prd, write prd for, plan this feature, requirements for, spec out."
+description: "Draft a Product Requirements Document (PRD) for a new capability. Use when planning a feature, kicking off a project, or when asked for a PRD, feature spec, or requirements document. Triggers on: create a prd, write a prd for, plan this feature, requirements for, spec this out."
 user-invocable: true
 ---
 
-# PRD Generator
+# PRD Writer
 
-Create detailed Product Requirements Documents that are clear, actionable, and suitable for implementation.
-
----
-
-## The Job
-
-1. Receive a feature description from the user
-2. Ask 3-5 essential clarifying questions (with lettered options)
-3. Generate a structured PRD based on answers
-4. Save to `tasks/prd-[feature-name].md`
-
-**Important:** Do NOT start implementing. Just create the PRD.
+Produce Product Requirements Documents that are specific, implementation-ready, and easy for humans or agents to follow.
 
 ---
 
-## Step 1: Clarifying Questions
+## Mission
 
-Ask only critical questions where the initial prompt is ambiguous. Focus on:
+Your responsibilities are:
 
-- **Problem/Goal:** What problem does this solve?
-- **Core Functionality:** What are the key actions?
-- **Scope/Boundaries:** What should it NOT do?
-- **Success Criteria:** How do we know it's done?
+1. Take the user's feature idea or project brief
+2. Ask 3-5 important clarifying questions with lettered answer choices
+3. Turn the clarified input into a structured PRD
+4. Save the result to `tasks/prd-[feature-name].md`
 
-### Format Questions Like This:
+**Do not implement the feature.** The only deliverable is the PRD.
+
+---
+
+## Clarify Before Writing
+
+Ask follow-up questions only when the initial request leaves meaningful gaps. Prioritize questions that clarify:
+
+- **Outcome:** what improvement or result the feature should create
+- **Core workflow:** what the user must actually be able to do
+- **Scope limits:** what is intentionally excluded from this effort
+- **Success definition:** what must be true for the work to count as done
+
+### Question Format
+
+Use a format like this:
 
 ```
-1. What is the primary goal of this feature?
-   A. Improve user onboarding experience
-   B. Increase user retention
-   C. Reduce support burden
+1. Which outcome matters most for this feature?
+   A. Faster onboarding
+   B. Better retention
+   C. Lower support volume
    D. Other: [please specify]
 
-2. Who is the target user?
+2. Who should this serve first?
    A. New users only
    B. Existing users only
    C. All users
-   D. Admin users only
+   D. Internal admins only
 
-3. What is the scope?
-   A. Minimal viable version
-   B. Full-featured implementation
-   C. Just the backend/API
-   D. Just the UI
+3. How broad should the first release be?
+   A. Smallest useful version
+   B. Full first release
+   C. Backend/API only
+   D. UI only
 ```
 
-This lets users respond with "1A, 2C, 3B" for quick iteration. Remember to indent the options.
+This allows the user to respond quickly with something like `1B, 2C, 3A`. Keep the answer choices indented beneath each question.
 
 ---
 
-## Step 2: PRD Structure
+## PRD Layout
 
-Generate the PRD with these sections:
+Create the PRD with these sections.
 
-### 1. Introduction/Overview
-Brief description of the feature and the problem it solves.
+### 1. Overview
+Summarize the feature, the problem it addresses, and why the work matters.
 
 ### 2. Goals
-Specific, measurable objectives (bullet list).
+List concrete outcomes the feature is expected to achieve.
 
 ### 3. User Stories
-Each story needs:
-- **Title:** Short descriptive name
-- **Description:** "As a [user], I want [feature] so that [benefit]"
-- **Acceptance Criteria:** Verifiable checklist of what "done" means
+Each story should include:
+- **Title:** brief descriptive label
+- **Description:** `As a [user], I want [capability] so that [benefit]`
+- **Acceptance Criteria:** a checklist of observable, verifiable outcomes
 
-Each story should be small enough to implement in one focused session.
+Keep each story small enough to fit into one focused implementation session.
 
-**Format:**
+**Story format:**
 ```markdown
 ### US-001: [Title]
-**Description:** As a [user], I want [feature] so that [benefit].
+**Description:** As a [user], I want [capability] so that [benefit].
 
 **Acceptance Criteria:**
-- [ ] Specific verifiable criterion
-- [ ] Another criterion
+- [ ] Specific observable requirement
+- [ ] Another observable requirement
 - [ ] Typecheck/lint passes
 - [ ] **[UI stories only]** Verify in browser using dev-browser skill
 ```
 
-**Important:** 
-- Acceptance criteria must be verifiable, not vague. "Works correctly" is bad. "Button shows confirmation dialog before deleting" is good.
-- **For any story with UI changes:** Always include "Verify in browser using dev-browser skill" as acceptance criteria. This ensures visual verification of frontend work.
+**Acceptance criteria rules:**
+- Every criterion must be testable.
+- Avoid vague wording like "works correctly" or "behaves well."
+- Prefer explicit behavior such as "Shows a confirmation dialog before deletion."
+- For any story that changes UI behavior, always include `Verify in browser using dev-browser skill`.
 
 ### 4. Functional Requirements
-Numbered list of specific functionalities:
-- "FR-1: The system must allow users to..."
-- "FR-2: When a user clicks X, the system must..."
+Write a numbered list of explicit system requirements, for example:
+- `FR-1: The system must ...`
+- `FR-2: When the user ..., the system must ...`
 
-Be explicit and unambiguous.
+Make them precise, concrete, and easy to reference later.
 
 ### 5. Non-Goals (Out of Scope)
-What this feature will NOT include. Critical for managing scope.
+Document what this work does not include. This section is important for keeping scope under control.
 
-### 6. Design Considerations (Optional)
-- UI/UX requirements
-- Link to mockups if available
-- Relevant existing components to reuse
+### 6. Design Notes (Optional)
+- UX expectations
+- Links to mockups or references
+- Existing patterns or components worth reusing
 
-### 7. Technical Considerations (Optional)
-- Known constraints or dependencies
-- Integration points with existing systems
-- Performance requirements
+### 7. Technical Notes (Optional)
+- Constraints
+- Dependencies
+- Integration points
+- Performance expectations
 
 ### 8. Success Metrics
-How will success be measured?
-- "Reduce time to complete X by 50%"
-- "Increase conversion rate by 10%"
+Explain how success will be measured once the feature ships.
 
 ### 9. Open Questions
-Remaining questions or areas needing clarification.
+Capture unresolved decisions, assumptions, or risks that still need answers.
 
 ---
 
-## Writing for Junior Developers
+## Writing Style
 
-The PRD reader may be a junior developer or AI agent. Therefore:
+Assume the PRD may be read by a junior developer or another agent. Write accordingly:
 
-- Be explicit and unambiguous
-- Avoid jargon or explain it
-- Provide enough detail to understand purpose and core logic
-- Number requirements for easy reference
-- Use concrete examples where helpful
+- Be direct and unambiguous
+- Avoid jargon when possible, or explain it when necessary
+- Include enough detail to explain intent and core behavior
+- Number requirements so they are easy to reference
+- Use concrete examples when they remove ambiguity
 
 ---
 
-## Output
+## Output Rules
 
 - **Format:** Markdown (`.md`)
 - **Location:** `tasks/`
-- **Filename:** `prd-[feature-name].md` (kebab-case)
+- **Filename:** `prd-[feature-name].md` in kebab-case
 
 ---
 
 ## Example PRD
 
 ```markdown
-# PRD: Task Priority System
+# PRD: Saved Filter Presets
 
-## Introduction
+## Overview
 
-Add priority levels to tasks so users can focus on what matters most. Tasks can be marked as high, medium, or low priority, with visual indicators and filtering to help users manage their workload effectively.
+Allow users to save frequently used filter combinations so they can return to the same view without rebuilding it each time. This reduces repetitive work and makes large data sets easier to navigate.
 
 ## Goals
 
-- Allow assigning priority (high/medium/low) to any task
-- Provide clear visual differentiation between priority levels
-- Enable filtering and sorting by priority
-- Default new tasks to medium priority
+- Let users save a named filter preset from the current view
+- Let users apply a preset in a single action
+- Let users rename and delete saved presets
+- Keep the first release simple and predictable
 
 ## User Stories
 
-### US-001: Add priority field to database
-**Description:** As a developer, I need to store task priority so it persists across sessions.
+### US-001: Persist filter presets
+**Description:** As a developer, I want saved presets stored persistently so users keep them between sessions.
 
 **Acceptance Criteria:**
-- [ ] Add priority column to tasks table: 'high' | 'medium' | 'low' (default 'medium')
-- [ ] Generate and run migration successfully
+- [ ] Store preset name and filter values in persistent storage
+- [ ] Associate presets with the correct user
+- [ ] Provide a safe empty default when a user has no presets yet
 - [ ] Typecheck passes
 
-### US-002: Display priority indicator on task cards
-**Description:** As a user, I want to see task priority at a glance so I know what needs attention first.
+### US-002: Save the current filter state
+**Description:** As a user, I want to save my current filters so I can reuse them later.
 
 **Acceptance Criteria:**
-- [ ] Each task card shows colored priority badge (red=high, yellow=medium, gray=low)
-- [ ] Priority visible without hovering or clicking
-- [ ] Typecheck passes
-- [ ] Verify in browser using dev-browser skill
-
-### US-003: Add priority selector to task edit
-**Description:** As a user, I want to change a task's priority when editing it.
-
-**Acceptance Criteria:**
-- [ ] Priority dropdown in task edit modal
-- [ ] Shows current priority as selected
-- [ ] Saves immediately on selection change
+- [ ] A "Save preset" action is available from the filtered view
+- [ ] The user can enter a preset name before saving
+- [ ] Saving confirms success without resetting the current view
 - [ ] Typecheck passes
 - [ ] Verify in browser using dev-browser skill
 
-### US-004: Filter tasks by priority
-**Description:** As a user, I want to filter the task list to see only high-priority items when I'm focused.
+### US-003: Apply a saved preset
+**Description:** As a user, I want to reapply a saved preset instantly so I can reach the view I need faster.
 
 **Acceptance Criteria:**
-- [ ] Filter dropdown with options: All | High | Medium | Low
-- [ ] Filter persists in URL params
-- [ ] Empty state message when no tasks match filter
+- [ ] A preset picker lists saved presets by name
+- [ ] Selecting a preset applies all stored filters
+- [ ] An empty state appears when no presets exist
+- [ ] Typecheck passes
+- [ ] Verify in browser using dev-browser skill
+
+### US-004: Manage saved presets
+**Description:** As a user, I want to rename or delete presets so my saved views stay organized.
+
+**Acceptance Criteria:**
+- [ ] The user can rename an existing preset
+- [ ] The user can delete a preset after confirmation
+- [ ] Deleted presets disappear from the picker immediately
 - [ ] Typecheck passes
 - [ ] Verify in browser using dev-browser skill
 
 ## Functional Requirements
 
-- FR-1: Add `priority` field to tasks table ('high' | 'medium' | 'low', default 'medium')
-- FR-2: Display colored priority badge on each task card
-- FR-3: Include priority selector in task edit modal
-- FR-4: Add priority filter dropdown to task list header
-- FR-5: Sort by priority within each status column (high to medium to low)
+- FR-1: The system must allow each user to save multiple named filter presets.
+- FR-2: The system must persist the full set of filters associated with each preset.
+- FR-3: The system must let users apply a preset from the main view.
+- FR-4: The system must let users rename an existing preset.
+- FR-5: The system must require confirmation before permanently deleting a preset.
 
 ## Non-Goals
 
-- No priority-based notifications or reminders
-- No automatic priority assignment based on due date
-- No priority inheritance for subtasks
+- No sharing presets between users
+- No automatic preset recommendations
+- No import/export flow in the first release
 
-## Technical Considerations
+## Technical Notes
 
-- Reuse existing badge component with color variants
-- Filter state managed via URL search params
-- Priority stored in database, not computed
+- Reuse the existing filter state shape where practical
+- Keep preset data scoped to the current user
+- Preserve any existing URL/filter synchronization behavior
 
 ## Success Metrics
 
-- Users can change priority in under 2 clicks
-- High-priority tasks immediately visible at top of lists
-- No regression in task list performance
+- Users can apply a saved preset in one action
+- Rebuilding common filter combinations becomes unnecessary
+- No noticeable slowdown when loading the preset list
 
 ## Open Questions
 
-- Should priority affect task ordering within a column?
-- Should we add keyboard shortcuts for priority changes?
+- Should there be a maximum number of presets per user?
+- Should one preset be markable as the default?
 ```
 
 ---
 
-## Checklist
+## Final Check
 
 Before saving the PRD:
 
-- [ ] Asked clarifying questions with lettered options
-- [ ] Incorporated user's answers
-- [ ] User stories are small and specific
-- [ ] Functional requirements are numbered and unambiguous
-- [ ] Non-goals section defines clear boundaries
+- [ ] Asked lettered clarifying questions when needed
+- [ ] Reflected the user's answers in the final document
+- [ ] Kept user stories small and implementation-friendly
+- [ ] Wrote numbered functional requirements
+- [ ] Defined clear non-goals
 - [ ] Saved to `tasks/prd-[feature-name].md`

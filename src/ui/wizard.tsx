@@ -321,25 +321,25 @@ const baseHomeOptions: Array<{ value: HomeAction; label: string; description: st
   {
     value: 'run-existing',
     label: 'Run existing PRDs',
-    description: 'Choose the provider first, then pick one or more PRDs from ./docs/prds, review their backlogs, and launch Ralphi.'
+    description: 'Pick PRDs, review backlogs, and launch.'
   },
   {
     value: 'create-prd',
     label: 'Create new PRDs',
-    description: 'Choose the provider first, then write a feature brief, generate the PRD backlog, and continue to execution.'
+    description: 'Write a brief, generate a PRD backlog, and continue.'
   },
   {
     value: 'notifications',
     label: 'Notifications',
-    description: 'Configure project webhook notifications and save them into .ralphi.json.'
+    description: 'Configure webhooks in .ralphi.json.'
   },
-  { value: 'manage-skills', label: 'Manage skills', description: 'Install or review built-in, project, and global skills.' },
+  { value: 'manage-skills', label: 'Manage skills', description: 'Install or review skills.' },
   {
     value: 'cleanup',
     label: 'Cleanup Ralphi worktrees',
-    description: 'Remove Ralphi-created execution worktrees and branches after you confirm with CLEANUP.'
+    description: 'Remove Ralphi-managed worktrees and branches.'
   },
-  { value: 'about', label: 'About', description: 'Read the project overview, runtime model, and control deck conventions.' }
+  { value: 'about', label: 'About', description: 'Read the overview and runtime model.' }
 ];
 
 const aboutHighlights = [
@@ -1336,8 +1336,8 @@ function WizardApp({
         value: 'bootstrap',
         label: hasRecommendedBootstrapItems ? 'Project bootstrap' : 'Optional bootstrap',
         description: hasRecommendedBootstrapItems
-          ? 'Review the remaining recommended project scaffolds before launching a run.'
-          : 'Open optional project scaffolds such as a starter devcontainer when you need them.'
+          ? 'Review recommended project scaffolds before launch.'
+          : 'Open optional scaffolds such as a starter devcontainer.'
       },
       ...trailing
     ];
@@ -4639,7 +4639,7 @@ function WizardApp({
               <SectionPanel title="Select provider" subtitle="CONFIG" flexGrow={1}>
                 <Text color={palette.dim}>Choose the provider before PRD setup so draft generation, backlog generation, and execution all use the same runtime.</Text>
                 {providerOptions.map((option, index) => (
-                  <ChoiceRow key={option.value} active={index === providerIndex} label={option.value} description={option.description} />
+                  <ChoiceRow key={option.value} active={index === providerIndex} label={option.value} />
                 ))}
                 <Box marginTop={1} flexDirection="column">
                   <Text color={palette.accent}>{activeProvider.value}</Text>
