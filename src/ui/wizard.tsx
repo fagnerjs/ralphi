@@ -4064,7 +4064,7 @@ function WizardApp({
                 </Box>
                 <Box marginTop={1} flexDirection="column">
                   {pendingRunOptions.map((option, index) => (
-                    <ChoiceRow key={option.value} active={index === pendingRunIndex} label={option.label} description={option.description} />
+                    <ChoiceRow compact key={option.value} active={index === pendingRunIndex} label={option.label} description={option.description} />
                   ))}
                 </Box>
                 <HintLine>Use ↑ ↓ and Enter. q cancels the wizard.</HintLine>
@@ -4074,7 +4074,7 @@ function WizardApp({
             {screen === 'home' && (
               <SectionPanel title="Select a launch mode" subtitle="ENTRY" flexGrow={1}>
                 {homeOptions.map((option, index) => (
-                  <ChoiceRow key={option.value} active={index === homeIndex} label={option.label} description={option.description} />
+                  <ChoiceRow compact key={option.value} active={index === homeIndex} label={option.label} description={option.description} />
                 ))}
                 <HintLine>Use ↑ ↓ and Enter. q cancels.</HintLine>
               </SectionPanel>
@@ -4087,7 +4087,7 @@ function WizardApp({
                 </Text>
                 <Box marginTop={1} flexDirection="column">
                   {notificationMenuOptions.map((option, index) => (
-                    <ChoiceRow
+                    <ChoiceRow compact
                       key={option.value}
                       active={index === notificationMenuCursor}
                       label={option.label}
@@ -4390,7 +4390,7 @@ function WizardApp({
                           ? 'No provider skill directory was found in this project or in your home folder.'
                           : `Browse ${directorySkills.length} provider skill${directorySkills.length === 1 ? '' : 's'} from project/global directories.`;
 
-                    return <ChoiceRow key={option.value} active={index === skillModeIndex} label={option.label} description={description} />;
+                    return <ChoiceRow compact key={option.value} active={index === skillModeIndex} label={option.label} description={description} />;
                   })}
                 </Box>
                 <HintLine>Use ↑ ↓ and Enter. Left arrow returns to the previous step.</HintLine>
@@ -4407,7 +4407,7 @@ function WizardApp({
                 {directorySkillWindow.values.map((skill, index) => {
                   const absoluteIndex = directorySkillWindow.start + index;
                   return (
-                    <ChoiceRow
+                    <ChoiceRow compact
                       key={skill.id}
                       active={absoluteIndex === directorySkillCursor}
                       label={skill.name}
@@ -4453,7 +4453,7 @@ function WizardApp({
                 </Box>
                 <Box marginTop={1} flexDirection="column">
                   {briefCreatedOptions.map((option, index) => (
-                    <ChoiceRow key={option.value} active={index === briefCreatedIndex} label={option.label} description={option.description} />
+                    <ChoiceRow compact key={option.value} active={index === briefCreatedIndex} label={option.label} description={option.description} />
                   ))}
                 </Box>
                 <HintLine>Enter confirms. Left arrow returns to the brief editor.</HintLine>
@@ -4637,10 +4637,19 @@ function WizardApp({
 
             {screen === 'provider' && (
               <SectionPanel title="Select provider" subtitle="CONFIG" flexGrow={1}>
-                <Text color={palette.dim}>Choose the provider before PRD setup so draft generation, backlog generation, and execution all use the same runtime.</Text>
-                {providerOptions.map((option, index) => (
-                  <ChoiceRow key={option.value} active={index === providerIndex} label={option.value} />
-                ))}
+                <Text color={palette.dim}>Choose the provider for this launch.</Text>
+                <Box marginTop={1} flexDirection="column">
+                  {providerOptions.map((option, index) => (
+                    <Box key={option.value} flexShrink={1}>
+                      <Text color={index === providerIndex ? palette.accent : palette.dim}>{index === providerIndex ? '> ' : '  '}</Text>
+                      <Box flexGrow={1} flexShrink={1}>
+                        <Text color={index === providerIndex ? palette.text : palette.dim} wrap="truncate-end">
+                          {option.value}
+                        </Text>
+                      </Box>
+                    </Box>
+                  ))}
+                </Box>
                 <Box marginTop={1} flexDirection="column">
                   <Text color={palette.accent}>{activeProvider.value}</Text>
                   {activeProviderStructureLines.map(line => (
@@ -4708,7 +4717,7 @@ function WizardApp({
                 </Text>
                 <Box marginTop={1} flexDirection="column">
                   {providerSkillDecisionOptions.map((option, index) => (
-                    <ChoiceRow
+                    <ChoiceRow compact
                       key={option.value}
                       active={index === providerSkillActionIndex}
                       label={option.label}
@@ -4726,7 +4735,7 @@ function WizardApp({
             {screen === 'environment' && (
               <SectionPanel title="Choose runtime" subtitle="EXECUTION" flexGrow={1}>
                 {availableEnvironmentOptions.map((option, index) => (
-                  <ChoiceRow key={option.value} active={index === environmentIndex} label={option.label} description={option.description} />
+                  <ChoiceRow compact key={option.value} active={index === environmentIndex} label={option.label} description={option.description} />
                 ))}
                 <Box marginTop={1} flexDirection="column">
                   <HintLine>
@@ -4742,7 +4751,7 @@ function WizardApp({
             {screen === 'schedule' && (
               <SectionPanel title="Choose execution strategy" subtitle="ORCHESTRATION" flexGrow={1}>
                 {scheduleOptions.map((option, index) => (
-                  <ChoiceRow key={option.value} active={index === scheduleIndex} label={option.value} description={option.description} />
+                  <ChoiceRow compact key={option.value} active={index === scheduleIndex} label={option.value} description={option.description} />
                 ))}
                 <HintLine>
                   {selectedPrdPaths.length === 1
@@ -4879,7 +4888,7 @@ function WizardApp({
                 {screen === 'skills-menu' && (
                   <Box flexDirection="column">
                     {skillMenuOptions.map((option, index) => (
-                      <ChoiceRow key={option.value} active={index === skillMenuIndex} label={option.label} description={option.description} />
+                      <ChoiceRow compact key={option.value} active={index === skillMenuIndex} label={option.label} description={option.description} />
                     ))}
                     <Box marginTop={1} flexDirection="column">
                       <Text color={palette.accent}>Built-in skills</Text>
@@ -4983,7 +4992,7 @@ function WizardApp({
                     </Text>
                     <Box marginTop={1} flexDirection="column">
                       {skillTargetOptions.map((option, index) => (
-                        <ChoiceRow key={option.value} active={index === skillTargetIndex} label={option.label} description={option.description} />
+                        <ChoiceRow compact key={option.value} active={index === skillTargetIndex} label={option.label} description={option.description} />
                       ))}
                     </Box>
                     <Box marginTop={1} flexDirection="column">
@@ -5000,7 +5009,7 @@ function WizardApp({
                     </Text>
                     <Box marginTop={1} flexDirection="column">
                       {scopeOptions.map((option, index) => (
-                        <ChoiceRow
+                        <ChoiceRow compact
                           key={option.value}
                           active={index === scopeIndex}
                           label={option.value}

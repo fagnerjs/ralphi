@@ -180,15 +180,17 @@ export function ChoiceRow({
   active,
   label,
   description,
-  marker
+  marker,
+  compact
 }: {
   active: boolean;
   label: string;
   description?: string;
   marker?: string;
+  compact?: boolean;
 }) {
   return (
-    <Box flexDirection="column" marginBottom={1} flexShrink={1}>
+    <Box flexDirection="column" marginBottom={compact ? 0 : 1} flexShrink={1}>
       <Box flexShrink={1}>
         <Text color={active ? palette.accent : palette.dim}>{active ? '> ' : '  '}</Text>
         <Box flexGrow={1} flexShrink={1}>
