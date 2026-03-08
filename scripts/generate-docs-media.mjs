@@ -14,7 +14,7 @@ async function main() {
 
   process.stdout.write(`Ralphi docs media directory is ready: ${mediaDir}\n`);
   process.stdout.write('Add static images manually when publishing the README.\n');
-  process.stdout.write('Expected files: ralphi-hero.png, ralphi-dashboard.png, ralphi-arcade.png, ralphi-cli.png\n');
+  process.stdout.write('Expected files: ralphi-hero.png, ralphi-backlog.png, ralphi-live.png, ralphi-arcade-select.png, ralphi-arcade-game.png\n');
 }
 
 main().catch(error => {

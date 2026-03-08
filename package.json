@@ -1,9 +1,20 @@
 {
-  "name": "ralphi",
+  "name": "@fagnerjs/ralphi",
   "version": "0.1.0",
-  "description": "Neon terminal runner for long-lived PRD execution loops.",
+  "description": "Ralphi is an **Autonomous AI coding loop** for PRD-driven execution.",
   "type": "module",
   "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/fagnerjs/ralphi.git"
+  },
+  "homepage": "https://github.com/fagnerjs/ralphi#readme",
+  "bugs": {
+    "url": "https://github.com/fagnerjs/ralphi/issues"
+  },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "bin": {
@@ -16,7 +27,7 @@
   "files": [
     "dist",
     "skills",
-    "docs",
+    "docs/media",
     "README.md",
     "ralphi.sh"
   ],
@@ -32,7 +43,8 @@
     "dev": "tsx src/cli.tsx",
     "start": "node dist/cli.js",
     "prepack": "npm run build && npm run docs:media",
-    "prepublishOnly": "npm run typecheck && npm run build && npm run docs:media"
+    "prepublishOnly": "npm run typecheck && npm run build && npm run docs:media",
+    "postbuild": "node ./scripts/prepare-dist-package.mjs"
   },
   "keywords": [
     "cli",

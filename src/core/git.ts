@@ -1,6 +1,7 @@
 import { cp, mkdir, mkdtemp, readFile, readdir, rename, rm } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
+import { realpathSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -131,8 +132,33 @@ async function gitOutput(rootDir: string, args: string[]): Promise<string> {
 }
 
 function pathWithin(targetPath: string, rootPath: string): boolean {
-  const relative = path.relative(rootPath, targetPath);
+  const relative = path.relative(normalizeComparablePath(rootPath), normalizeComparablePath(targetPath));
   return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
+}
+
+function normalizeComparablePath(targetPath: string): string {
+  const resolved = path.resolve(targetPath);
+  const pendingSegments: string[] = [];
+  let current = resolved;
+
+  while (true) {
+    try {
+      const realPath = realpathSync.native(current);
+      return path.join(realPath, ...pendingSegments.reverse());
+    } catch {
+      const parent = path.dirname(current);
+      if (parent === current) {
+        return path.normalize(resolved);
+      }
+
+      pendingSegments.push(path.basename(current));
+      current = parent;
+    }
+  }
+}
+
+function samePath(leftPath: string, rightPath: string): boolean {
+  return normalizeComparablePath(leftPath) === normalizeComparablePath(rightPath);
 }
 
 function mapStatusToChange(status: string): RalphTouchedFileChange {
@@ -361,7 +387,7 @@ async function parseWorktreeList(rootDir: string): Promise<WorktreeEntry[]> {
 
     if (key === 'worktree') {
       current = {
-        path: value,
+        path: normalizeComparablePath(value),
         branch: null,
         bare: false
       };
@@ -394,7 +420,7 @@ async function listManagedWorktreeDirs(worktreeRoot: string): Promise<string[]> 
   const entries = await readdir(worktreeRoot, { withFileTypes: true });
   return entries
     .filter(entry => entry.isDirectory())
-    .map(entry => path.join(worktreeRoot, entry.name))
+    .map(entry => normalizeComparablePath(path.join(worktreeRoot, entry.name)))
     .sort((left, right) => left.localeCompare(right));
 }
 
@@ -405,7 +431,7 @@ async function repairWorktreePath(rootDir: string, worktreePath: string): Promis
   }
 
   const refreshed = await parseWorktreeList(rootDir);
-  return refreshed.find(entry => entry.path === worktreePath) ?? null;
+  return refreshed.find(entry => samePath(entry.path, worktreePath)) ?? null;
 }
 
 async function moveManagedWorktreeAside(worktreePath: string): Promise<string> {
@@ -654,7 +680,7 @@ export async function provisionWorktrees(
     }
 
     const refreshedByBranch = existing.find(entry => entry.branch === desiredBranch);
-    const refreshedByPath = existing.find(entry => entry.path === worktreePath);
+    const refreshedByPath = existing.find(entry => samePath(entry.path, worktreePath));
     if (refreshedByBranch) {
       context.worktreePath = refreshedByBranch.path;
       context.workspaceDir = refreshedByBranch.path;
@@ -790,7 +816,7 @@ async function readCheckpointSnapshots(ralphDir: string): Promise<CheckpointClea
         return {
           checkpointPath,
           runDir: path.join(stateDir, entry.name),
-          path: checkpoint.worktreePath ?? null,
+          path: checkpoint.worktreePath ? normalizeComparablePath(checkpoint.worktreePath) : null,
           branch: checkpoint.branchName ?? null,
           sourcePrd: checkpoint.sourcePrd ?? null,
           status: checkpoint.status,

@@ -46,7 +46,7 @@ Ralphi requires Node 20 or newer.
 ### Install from npm
 
 ```bash
-npm install -g ralphi
+npm install -g @fagnerjs/ralphi
 ```
 
 Before your first run, make sure the provider CLI you want to use is installed and available in your shell. If you want a quick readiness check, run:
