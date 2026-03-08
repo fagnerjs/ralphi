@@ -10,6 +10,9 @@ test('loadArcadeGames discovers and sorts the available cabinets', async () => {
 
   assert.ok(ids.has('asteroid-run'));
   assert.ok(ids.has('circuit-duel'));
+  assert.ok(ids.has('brick-blitz'));
+  assert.ok(ids.has('highway-heat'));
+  assert.ok(ids.has('vector-pong'));
   assert.deepEqual(
     titles,
     [...titles].sort((left, right) => left.localeCompare(right))

@@ -96,7 +96,7 @@ function buildSegments(
   });
 }
 
-function AsteroidRunGame({ width, height, onExit }: ArcadeGameProps) {
+function AsteroidRunGame({ width, height, highScore, reportScore, onExit }: ArcadeGameProps) {
   const gridWidth = Math.max(36, width - 2);
   const gridHeight = Math.max(12, height - 6);
   const [state, setState] = useState(() => createAsteroidRunState(gridWidth));
@@ -115,6 +115,10 @@ function AsteroidRunGame({ width, height, onExit }: ArcadeGameProps) {
       clearInterval(timer);
     };
   }, [gridHeight, gridWidth, state.level]);
+
+  useEffect(() => {
+    reportScore(state.score);
+  }, [reportScore, state.score]);
 
   useInput((input, key) => {
     if (input === 'g' || input === 'G' || key.escape) {
@@ -156,8 +160,8 @@ function AsteroidRunGame({ width, height, onExit }: ArcadeGameProps) {
     <Box flexDirection="column" flexGrow={1}>
       <Box justifyContent="space-between">
         <Text color={palette.text}>{`Score ${String(state.score).padStart(5, '0')}`}</Text>
-        <Text color={palette.text}>{`Hull ${state.lives}`}</Text>
-        <Text color={palette.text}>{`Sector ${state.level}`}</Text>
+        <Text color={palette.yellow}>{`Hi ${String(highScore).padStart(5, '0')}`}</Text>
+        <Text color={palette.text}>{`Hull ${state.lives} · Sector ${state.level}`}</Text>
       </Box>
       <Box marginTop={1} flexDirection="column">
         {segments.map((row, rowIndex) => (

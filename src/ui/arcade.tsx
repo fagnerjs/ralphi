@@ -1,10 +1,11 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Box, Text, useInput } from 'ink';
 import Gradient from 'ink-gradient';
 import { Spinner } from '@inkjs/ui';
 
 import { loadArcadeGames } from '../arcade/loader.js';
 import type { ArcadeGameDefinition } from '../arcade/types.js';
+import { loadArcadeHighScores, saveArcadeHighScore } from '../core/arcade-scores.js';
 import { HintLine, SectionPanel } from './components.js';
 import { palette } from './theme.js';
 
@@ -30,13 +31,16 @@ function repeatPattern(pattern: string, width: number): string {
   return pattern.repeat(Math.ceil(width / pattern.length)).slice(0, width);
 }
 
-function cabinetHighScore(game: ArcadeGameDefinition | null): string {
-  if (!game) {
-    return '000000';
+function normalizeScore(score: number): number {
+  if (!Number.isFinite(score)) {
+    return 0;
   }
 
-  const seed = `${game.id}:${game.title}:${game.year}`.split('').reduce((total, char, index) => total + char.charCodeAt(0) * (index + 7), 0);
-  return String(10000 + (seed % 890000)).padStart(6, '0');
+  return Math.max(0, Math.floor(score));
+}
+
+function formatHighScore(score: number): string {
+  return String(normalizeScore(score)).padStart(6, '0');
 }
 
 function CabinetChoice({ game, active }: { game: ArcadeGameDefinition; active: boolean }) {
@@ -67,6 +71,12 @@ export function ArcadeCabinet({ maxWidth, maxHeight, onClose }: ArcadeCabinetPro
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [blinkOn, setBlinkOn] = useState(true);
+  const [highScores, setHighScores] = useState<Record<string, number>>({});
+  const highScoresRef = useRef<Record<string, number>>({});
+
+  useEffect(() => {
+    highScoresRef.current = highScores;
+  }, [highScores]);
 
   useEffect(() => {
     let cancelled = false;
@@ -99,6 +109,38 @@ export function ArcadeCabinet({ maxWidth, maxHeight, onClose }: ArcadeCabinetPro
   }, []);
 
   useEffect(() => {
+    let cancelled = false;
+
+    if (games.length === 0) {
+      highScoresRef.current = {};
+      setHighScores({});
+      return;
+    }
+
+    void loadArcadeHighScores(games.map(game => game.id))
+      .then(scores => {
+        if (cancelled) {
+          return;
+        }
+
+        highScoresRef.current = scores;
+        setHighScores(scores);
+      })
+      .catch(() => {
+        if (cancelled) {
+          return;
+        }
+
+        highScoresRef.current = {};
+        setHighScores({});
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [games]);
+
+  useEffect(() => {
     const timer = setInterval(() => {
       setBlinkOn(current => !current);
     }, 650);
@@ -115,13 +157,55 @@ export function ArcadeCabinet({ maxWidth, maxHeight, onClose }: ArcadeCabinetPro
   const selectedGame = games[selectedIndex] ?? games[0] ?? null;
   const menuWidth = Math.max(26, Math.min(38, Math.floor(cabinetWidth * 0.34)));
   const detailWidth = Math.max(14, cabinetWidth - menuWidth - 8);
+  const dataPanelWidth = Math.max(20, Math.min(26, Math.floor(detailWidth * 0.34)));
   const marquee = marqueeLines(selectedGame, detailWidth - 4);
   const attractText = blinkOn ? 'INSERT COIN TO LAUNCH' : 'PRESS ENTER TO PLAY';
   const attractBadge = blinkOn ? '1 CREDIT' : 'FREE PLAY';
-  const hiScore = useMemo(() => cabinetHighScore(selectedGame), [selectedGame]);
+  const selectedHighScore = selectedGame ? highScores[selectedGame.id] ?? 0 : 0;
+  const activeHighScore = activeGame ? highScores[activeGame.id] ?? 0 : 0;
   const divider = useMemo(() => repeatPattern(blinkOn ? '═' : '━', Math.max(18, cabinetWidth - 4)), [blinkOn, cabinetWidth]);
   const scanline = useMemo(() => repeatPattern(blinkOn ? '▓▒' : '▒▓', Math.max(18, detailWidth - 2)), [blinkOn, detailWidth]);
   const grille = useMemo(() => repeatPattern('▣═', Math.max(18, detailWidth - 2)), [detailWidth]);
+
+  const persistHighScore = useCallback((gameId: string, score: number) => {
+    const normalizedScore = normalizeScore(score);
+    const currentScore = highScoresRef.current[gameId] ?? 0;
+    if (normalizedScore <= currentScore) {
+      return;
+    }
+
+    const nextScores = {
+      ...highScoresRef.current,
+      [gameId]: normalizedScore
+    };
+    highScoresRef.current = nextScores;
+    setHighScores(nextScores);
+
+    void saveArcadeHighScore(gameId, normalizedScore).then(savedScore => {
+      const latest = highScoresRef.current[gameId] ?? 0;
+      if (savedScore <= latest) {
+        return;
+      }
+
+      const savedScores = {
+        ...highScoresRef.current,
+        [gameId]: savedScore
+      };
+      highScoresRef.current = savedScores;
+      setHighScores(savedScores);
+    });
+  }, []);
+
+  const reportActiveScore = useCallback(
+    (score: number) => {
+      if (!activeGameId) {
+        return;
+      }
+
+      persistHighScore(activeGameId, score);
+    },
+    [activeGameId, persistHighScore]
+  );
 
   useEffect(() => {
     setSelectedIndex(current => Math.max(0, Math.min(current, Math.max(games.length - 1, 0))));
@@ -172,7 +256,13 @@ export function ArcadeCabinet({ maxWidth, maxHeight, onClose }: ArcadeCabinetPro
           <HintLine>Press Q, G, or Esc to leave the arcade.</HintLine>
         </Box>
       ) : activeGame && ActiveGameComponent ? (
-        <ActiveGameComponent width={cabinetWidth - 4} height={cabinetHeight - 6} onExit={() => setActiveGameId(null)} />
+        <ActiveGameComponent
+          width={cabinetWidth - 4}
+          height={cabinetHeight - 6}
+          highScore={activeHighScore}
+          reportScore={reportActiveScore}
+          onExit={() => setActiveGameId(null)}
+        />
       ) : (
         <Box flexDirection="column" flexGrow={1}>
           <Box justifyContent="space-between" flexShrink={0}>
@@ -182,7 +272,7 @@ export function ArcadeCabinet({ maxWidth, maxHeight, onClose }: ArcadeCabinetPro
             <Text color={blinkOn ? palette.yellow : palette.green}>{attractBadge}</Text>
           </Box>
           <Box justifyContent="space-between" flexShrink={0}>
-            <Text color={palette.green}>{`1UP 000000   HI-SCORE ${hiScore}   2UP 000000`}</Text>
+            <Text color={palette.green}>{`1UP 000000   HI-SCORE ${formatHighScore(selectedHighScore)}   2UP 000000`}</Text>
             <Text color={palette.dim}>`ralphi/src/arcade`</Text>
           </Box>
           <Text color={palette.borderSoft}>{divider}</Text>
@@ -214,10 +304,10 @@ export function ArcadeCabinet({ maxWidth, maxHeight, onClose }: ArcadeCabinetPro
                 </Box>
               </Box>
               <Box marginTop={1} flexDirection="row" flexGrow={1}>
-                <Box flexGrow={1} flexDirection="column" borderStyle="round" borderColor={palette.borderSoft} paddingX={1}>
+                <Box width={dataPanelWidth} flexShrink={0} flexDirection="column" borderStyle="round" borderColor={palette.borderSoft} paddingX={1}>
                   <Text color={palette.yellow}>CABINET DATA</Text>
                   <Text color={palette.text}>{selectedGame ? `${selectedGame.title} · ${selectedGame.year}` : 'Unknown cabinet'}</Text>
-                  <Text color={palette.green}>{`HI-SCORE ${hiScore}`}</Text>
+                  <Text color={palette.green}>{`HI-SCORE ${formatHighScore(selectedHighScore)}`}</Text>
                   <Text color={palette.dim}>{selectedGame ? `CAB ${String(selectedIndex + 1).padStart(2, '0')}` : 'CAB --'}</Text>
                   <Text color={palette.borderSoft}>{grille}</Text>
                 </Box>
@@ -238,6 +328,7 @@ export function ArcadeCabinet({ maxWidth, maxHeight, onClose }: ArcadeCabinetPro
           </Box>
           <Box marginTop={1} flexDirection="column">
             <HintLine>Use ↑ ↓ to browse cabinets. Press Enter to boot the highlighted game.</HintLine>
+            <HintLine>Hi-scores are saved per cabinet in `~/.ralphi/arcade/high-scores`.</HintLine>
             <HintLine>Esc returns from a game to this menu. Q, G, or Esc leaves the arcade.</HintLine>
           </Box>
         </Box>

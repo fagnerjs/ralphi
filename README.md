@@ -544,6 +544,7 @@ From the arcade menu you can:
 
 - browse the available built-in games
 - launch a game with `Enter`
+- keep a persistent high score for each built-in cabinet in `~/.ralphi/arcade/high-scores`
 - return to the arcade menu with `Esc`
 - close the arcade and go back to Ralphi with `G`, `Q`, or `Esc`
 

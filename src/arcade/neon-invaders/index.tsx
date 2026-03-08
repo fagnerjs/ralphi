@@ -285,7 +285,7 @@ function buildSegments(state: ArcadeState, width: number, height: number, stars:
   });
 }
 
-function NeonInvadersGame({ width, height, onExit }: ArcadeGameProps) {
+function NeonInvadersGame({ width, height, highScore, reportScore, onExit }: ArcadeGameProps) {
   const gridWidth = Math.max(24, Math.min(44, width - 6));
   const gridHeight = Math.max(12, Math.min(20, height - 8));
   const [state, setState] = useState<ArcadeState>(() => createArcadeState(gridWidth));
@@ -303,6 +303,10 @@ function NeonInvadersGame({ width, height, onExit }: ArcadeGameProps) {
       clearInterval(timer);
     };
   }, [gridHeight, gridWidth]);
+
+  useEffect(() => {
+    reportScore(state.score);
+  }, [reportScore, state.score]);
 
   useInput((input, key) => {
     if (input === 'g' || input === 'G' || key.escape) {
@@ -350,8 +354,8 @@ function NeonInvadersGame({ width, height, onExit }: ArcadeGameProps) {
     <Box flexDirection="column" flexGrow={1}>
       <Box justifyContent="space-between">
         <Text color={palette.text}>{`Score ${String(state.score).padStart(5, '0')}`}</Text>
-        <Text color={palette.text}>{`Lives ${state.lives}`}</Text>
-        <Text color={palette.text}>{`Level ${state.level}`}</Text>
+        <Text color={palette.yellow}>{`Hi ${String(highScore).padStart(5, '0')}`}</Text>
+        <Text color={palette.text}>{`Lives ${state.lives} · Level ${state.level}`}</Text>
       </Box>
       <Box marginTop={1} flexDirection="column">
         {segments.map((row, rowIndex) => (

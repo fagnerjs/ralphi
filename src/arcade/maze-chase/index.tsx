@@ -179,7 +179,7 @@ function tickState(state: MazeState): MazeState {
   };
 }
 
-function MazeChaseGame({ onExit }: ArcadeGameProps) {
+function MazeChaseGame({ highScore, reportScore, onExit }: ArcadeGameProps) {
   const [state, setState] = useState<MazeState>(() => createState());
 
   useEffect(() => {
@@ -235,6 +235,10 @@ function MazeChaseGame({ onExit }: ArcadeGameProps) {
     }
   });
 
+  useEffect(() => {
+    reportScore(state.score);
+  }, [reportScore, state.score]);
+
   const mazeLines = useMemo(
     () =>
       mazeLayout.map((row, rowIndex) =>
@@ -273,8 +277,8 @@ function MazeChaseGame({ onExit }: ArcadeGameProps) {
     <Box flexDirection="column" flexGrow={1}>
       <Box justifyContent="space-between">
         <Text color={palette.text}>{`Score ${String(state.score).padStart(5, '0')}`}</Text>
-        <Text color={palette.text}>{`Dots ${String(state.dots.size).padStart(3, '0')}`}</Text>
-        <Text color={palette.text}>{`Lives ${state.lives}`}</Text>
+        <Text color={palette.yellow}>{`Hi ${String(highScore).padStart(5, '0')}`}</Text>
+        <Text color={palette.text}>{`Dots ${String(state.dots.size).padStart(3, '0')} · Lives ${state.lives}`}</Text>
       </Box>
       <Box marginTop={1} flexDirection="column">
         {mazeLines.map((segments, rowIndex) => (

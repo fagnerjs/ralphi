@@ -307,7 +307,7 @@ function buildSegments(board: CellValue[][], piece: FallingPiece): RowSegment[][
   });
 }
 
-function TetraStackGame({ onExit }: ArcadeGameProps) {
+function TetraStackGame({ highScore, reportScore, onExit }: ArcadeGameProps) {
   const [state, setState] = useState<TetraState>(() => createState());
 
   useEffect(() => {
@@ -324,6 +324,10 @@ function TetraStackGame({ onExit }: ArcadeGameProps) {
       clearInterval(timer);
     };
   }, [state.level]);
+
+  useEffect(() => {
+    reportScore(state.score);
+  }, [reportScore, state.score]);
 
   useInput((input, key) => {
     if (input === 'g' || input === 'G' || key.escape) {
@@ -391,8 +395,8 @@ function TetraStackGame({ onExit }: ArcadeGameProps) {
     <Box flexDirection="column" flexGrow={1}>
       <Box justifyContent="space-between">
         <Text color={palette.text}>{`Score ${String(state.score).padStart(5, '0')}`}</Text>
-        <Text color={palette.text}>{`Lines ${String(state.lines).padStart(3, '0')}`}</Text>
-        <Text color={palette.text}>{`Level ${state.level}`}</Text>
+        <Text color={palette.yellow}>{`Hi ${String(highScore).padStart(5, '0')}`}</Text>
+        <Text color={palette.text}>{`Lines ${String(state.lines).padStart(3, '0')} · Level ${state.level}`}</Text>
       </Box>
       <Box marginTop={1}>
         <Box flexDirection="column">

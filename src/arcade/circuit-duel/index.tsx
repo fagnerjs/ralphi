@@ -99,7 +99,7 @@ function statusMessage(state: CircuitDuelState): { text: string; color: string }
   };
 }
 
-function CircuitDuelGame({ width, height, onExit }: ArcadeGameProps) {
+function CircuitDuelGame({ width, height, highScore, reportScore, onExit }: ArcadeGameProps) {
   const gridWidth = Math.max(30, width - 2);
   const gridHeight = Math.max(12, height - 6);
   const [state, setState] = useState(() => createCircuitDuelState(gridWidth, gridHeight));
@@ -118,6 +118,10 @@ function CircuitDuelGame({ width, height, onExit }: ArcadeGameProps) {
       clearInterval(timer);
     };
   }, [gridHeight, gridWidth, state.round]);
+
+  useEffect(() => {
+    reportScore(state.score.player);
+  }, [reportScore, state.score.player]);
 
   useInput((input, key) => {
     if (input === 'g' || input === 'G' || key.escape) {
@@ -166,8 +170,8 @@ function CircuitDuelGame({ width, height, onExit }: ArcadeGameProps) {
     <Box flexDirection="column" flexGrow={1}>
       <Box justifyContent="space-between">
         <Text color={palette.text}>{`You ${state.score.player}`}</Text>
-        <Text color={palette.text}>{`Round ${String(state.round).padStart(2, '0')}`}</Text>
-        <Text color={palette.text}>{`Rival ${state.score.rival}`}</Text>
+        <Text color={palette.yellow}>{`Hi ${String(highScore).padStart(5, '0')}`}</Text>
+        <Text color={palette.text}>{`Rival ${state.score.rival} · R${String(state.round).padStart(2, '0')}`}</Text>
       </Box>
       <Box marginTop={1} flexDirection="column">
         {segments.map((row, rowIndex) => (

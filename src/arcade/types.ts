@@ -3,6 +3,8 @@ import type React from 'react';
 export interface ArcadeGameProps {
   width: number;
   height: number;
+  highScore: number;
+  reportScore: (score: number) => void;
   onExit: () => void;
 }
 
