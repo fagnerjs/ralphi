@@ -150,6 +150,7 @@ export function makeConfig(rootDir: string, overrides: Partial<RalphConfig> = {}
     executionSkills: overrides.executionSkills ?? [],
     plans: overrides.plans ?? [defaultPlan],
     maxIterations: overrides.maxIterations ?? defaultPlan.iterations,
+    tokenBudget: overrides.tokenBudget ?? null,
     schedule: overrides.schedule ?? 'round-robin',
     verbose: overrides.verbose ?? false,
     workspaceStrategy: overrides.workspaceStrategy ?? 'worktree',
@@ -227,6 +228,7 @@ export function makeRunSummary(contexts: RalphContextSnapshot[], overrides: Part
     tool: overrides.tool ?? 'codex',
     schedule: overrides.schedule ?? 'round-robin',
     maxIterations: overrides.maxIterations ?? Math.max(...contexts.map(context => context.iterationsTarget), 0),
+    pauseReason: overrides.pauseReason ?? null,
     usageTotals: overrides.usageTotals ?? null,
     finalBranchName: overrides.finalBranchName ?? null,
     contexts: overrides.contexts ?? contexts

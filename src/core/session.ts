@@ -57,10 +57,14 @@ export async function loadRunSession(ralphDir: string): Promise<RalphiRunSession
     createdAt: parsed.createdAt ?? new Date(0).toISOString(),
     updatedAt: parsed.updatedAt ?? parsed.createdAt ?? new Date(0).toISOString(),
     status: parsed.status ?? 'blocked',
-    config: parsed.config,
+    config: {
+      ...parsed.config,
+      tokenBudget: parsed.config.tokenBudget ?? null
+    },
     summary: parsed.summary
       ? {
           ...parsed.summary,
+          pauseReason: parsed.summary.pauseReason ?? null,
           finalBranchName: parsed.summary.finalBranchName ?? null
         }
       : null,

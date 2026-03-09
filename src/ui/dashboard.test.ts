@@ -270,6 +270,48 @@ test('dashboardReducer uses a pending-work summary label when the run stops befo
   }
 });
 
+test('dashboardReducer surfaces token-limit pauses with the explicit reason', async () => {
+  const fixture = await createTempProject('ralphi-dashboard-');
+
+  try {
+    const config = makeConfig(fixture.rootDir, {
+      tokenBudget: {
+        limitTokens: 1620,
+        baselineTokens: 0
+      }
+    });
+    const context = makeContextSnapshot(config, {
+      done: true,
+      status: 'queued',
+      iterationsRun: 1,
+      iterationsTarget: 3,
+      usageTotals: makeUsageTotals()
+    });
+    const summary = makeRunSummary([context], {
+      completed: false,
+      pauseReason: {
+        code: 'token_limit',
+        message: 'Token limit reached: 1,620 / 1,620 tokens used since the last budget reset'
+      },
+      usageTotals: makeUsageTotals(),
+      contexts: [context]
+    });
+
+    const next = dashboardReducer(createInitialDashboardState(), {
+      type: 'summary',
+      summary
+    });
+
+    assert.equal(next.phase, 'done');
+    assert.equal(next.activeStep, 'Token limit reached');
+    assert.equal(buildSummaryPauseReason(summary), 'Token limit reached: 1,620 / 1,620 tokens used since the last budget reset');
+    assert.match(next.notifications[0]?.body ?? '', /Token limit reached: 1,620 \/ 1,620 tokens used since the last budget reset\./);
+    assert.match(buildRunSummaryText(summary), /Reason: Token limit reached: 1,620 \/ 1,620 tokens used since the last budget reset\./);
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
 test('pause reason helpers explain iteration limits for unfinished contexts', async () => {
   const fixture = await createTempProject('ralphi-dashboard-');
 

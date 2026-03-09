@@ -24,7 +24,7 @@ import { buildExecutionSkills, loadProjectConfig, migrateLegacyProjectRuntime, p
 import { loadContextCheckpoint, clearRunState, listCheckpointSnapshots, loadPendingRunSession, saveRunSession } from './core/session.js';
 import { buildSkillRegistrySnapshot } from './core/skills.js';
 import { displayPath, ensureDir, findProjectRoot, normalizeSchedule, normalizeWorkspaceStrategy } from './core/utils.js';
-import { buildCompactUsageSummary, buildUsageDisplayRows } from './core/usage.js';
+import { buildCompactUsageSummary, buildUsageDisplayRows, formatTokenCount, resolveUsageTotalTokens } from './core/usage.js';
 import { runDashboard } from './ui/dashboard.js';
 import { enterFullscreenTerminal } from './ui/terminal.js';
 import { runWizard } from './ui/wizard.js';
@@ -40,6 +40,7 @@ export interface ParsedArgs {
   workspaceStrategy?: WorkspaceStrategy;
   executionEnvironment?: ExecutionEnvironment;
   maxIterations?: number;
+  maxTokens?: number;
   perPrdIterations: number[];
   prdInput?: string;
   createPrdPrompt?: string;
@@ -67,6 +68,7 @@ Options:
   --prds file1,file2              Comma-separated PRD list
   --create-prd "brief"            Start from a new feature brief
   --max-iterations N              Default PRD pass budget. Default: 10
+  --max-tokens N                  Full execution token budget. Pauses at the limit
   --per-prd-iterations 5,3,2      Explicit PRD pass budget per selected PRD
   --schedule round-robin|per-prd|parallel
                                   Multi-PRD scheduling mode. Default: round-robin
@@ -104,6 +106,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
   let dryRun = false;
   let prdInput: string | undefined;
   let maxIterations: number | undefined;
+  let maxTokens: number | undefined;
   let schedule: ScheduleMode | undefined;
   let workspaceStrategy: WorkspaceStrategy | undefined;
   let executionEnvironment: ExecutionEnvironment | undefined;
@@ -125,6 +128,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
         workspaceStrategy,
         executionEnvironment,
         maxIterations,
+        maxTokens,
         perPrdIterations
       };
     }
@@ -185,6 +189,17 @@ export function parseArgs(argv: string[]): ParsedArgs {
 
     if (arg.startsWith('--max-iterations=')) {
       maxIterations = Number(arg.slice('--max-iterations='.length));
+      continue;
+    }
+
+    if (arg === '--max-tokens' && argv[index + 1]) {
+      maxTokens = Number(argv[index + 1]);
+      index += 1;
+      continue;
+    }
+
+    if (arg.startsWith('--max-tokens=')) {
+      maxTokens = Number(arg.slice('--max-tokens='.length));
       continue;
     }
 
@@ -255,6 +270,10 @@ export function parseArgs(argv: string[]): ParsedArgs {
     throw new Error('max iterations must be a positive integer.');
   }
 
+  if (typeof maxTokens === 'number' && (!Number.isInteger(maxTokens) || maxTokens < 1)) {
+    throw new Error('max tokens must be a positive integer.');
+  }
+
   return {
     command,
     help: false,
@@ -266,6 +285,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
     workspaceStrategy,
     executionEnvironment,
     maxIterations,
+    maxTokens,
     perPrdIterations,
     prdInput,
     createPrdPrompt
@@ -298,9 +318,43 @@ function printPlainSummary(summary: RalphRunSummary, rootDir: string): void {
     console.log(`Usage total: ${usageRows.map(row => `${row.label.toLowerCase()} ${row.value}`).join(' · ')}`);
   }
 
+  if (summary.pauseReason) {
+    console.log(`Pause reason: ${summary.pauseReason.message}`);
+  }
+
   if (summary.finalBranchName) {
     console.log(`Final merged branch: ${summary.finalBranchName}`);
   }
+}
+
+function applyTokenBudgetDecision(
+  config: RalphConfig,
+  summary: RalphRunSummary,
+  decision: { mode: 'limited' | 'unlimited'; limitTokens?: number } | null | undefined
+): RalphConfig {
+  if (!decision) {
+    return config;
+  }
+
+  if (decision.mode === 'unlimited') {
+    return {
+      ...config,
+      tokenBudget: null
+    };
+  }
+
+  const nextLimit = Number(decision.limitTokens);
+  if (!Number.isInteger(nextLimit) || nextLimit < 1) {
+    return config;
+  }
+
+  return {
+    ...config,
+    tokenBudget: {
+      limitTokens: nextLimit,
+      baselineTokens: resolveUsageTotalTokens(summary.usageTotals) ?? 0
+    }
+  };
 }
 
 function printDoctorReport(report: Awaited<ReturnType<typeof runDoctor>>, rootDir: string): void {
@@ -436,8 +490,9 @@ async function runPromptPreviewCommand(config: RalphConfig): Promise<number> {
 }
 
 async function runPlain(config: RalphConfig): Promise<RalphRunSummary> {
+  const tokenBudgetLabel = config.tokenBudget ? formatTokenCount(config.tokenBudget.limitTokens) ?? String(config.tokenBudget.limitTokens) : null;
   console.log(
-    `Ralphi :: provider=${config.tool} schedule=${config.schedule} workspace=${config.workspaceStrategy} max=${config.maxIterations}`
+    `Ralphi :: provider=${config.tool} schedule=${config.schedule} workspace=${config.workspaceStrategy} max=${config.maxIterations}${tokenBudgetLabel ? ` tokens=${tokenBudgetLabel}` : ''}`
   );
   console.log(`Queue: ${config.plans.map(plan => `${displayPath(plan.sourcePrd, config.rootDir)}(${plan.iterations})`).join(', ')}`);
 
@@ -546,6 +601,12 @@ export async function createInitialConfig(parsed: ParsedArgs, rootDir: string, c
     executionSkills: buildExecutionSkills(rootDir, tool, project.config),
     plans,
     maxIterations,
+    tokenBudget: parsed.maxTokens
+      ? {
+          limitTokens: parsed.maxTokens,
+          baselineTokens: 0
+        }
+      : null,
     schedule,
     verbose: parsed.verbose || defaults.verbose || false,
     workspaceStrategy,
@@ -654,16 +715,20 @@ export async function runCli(argv: string[] = process.argv.slice(2)): Promise<nu
         dashboardResult.nextAction === 'restart-session' ||
         dashboardResult.nextAction === 'discard-session'
       ) {
+        const resumeSeedConfig = applyTokenBudgetDecision(config, dashboardResult.summary, dashboardResult.tokenBudgetDecision);
         let pendingSession = await loadPendingRunSession(projectRalphiDir(rootDir));
         if (!pendingSession && dashboardResult.nextAction === 'resume-session') {
-          const checkpoints = await listCheckpointSnapshots(config);
+          const checkpoints = await listCheckpointSnapshots(resumeSeedConfig);
           if (checkpoints.length > 0) {
-            pendingSession = await saveRunSession(config.ralphDir, config, 'blocked', dashboardResult.summary);
+            pendingSession = await saveRunSession(config.ralphDir, resumeSeedConfig, 'running', dashboardResult.summary);
           }
         }
 
+        const resumeConfig = applyTokenBudgetDecision(pendingSession?.config ?? resumeSeedConfig, dashboardResult.summary, dashboardResult.tokenBudgetDecision);
+
         if (!pendingSession) {
           if (dashboardResult.nextAction === 'resume-session') {
+            config = resumeConfig;
             shouldLaunchWizard = false;
             continue;
           }
@@ -683,7 +748,8 @@ export async function runCli(argv: string[] = process.argv.slice(2)): Promise<nu
           continue;
         }
 
-        config = pendingSession.config;
+        await saveRunSession(config.ralphDir, resumeConfig, 'running', dashboardResult.summary);
+        config = resumeConfig;
         shouldLaunchWizard = false;
         continue;
       }

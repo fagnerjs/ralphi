@@ -133,6 +133,18 @@ export interface RalphUsageTotals {
   currency: string | null;
 }
 
+export interface RalphTokenBudget {
+  limitTokens: number;
+  baselineTokens: number;
+}
+
+export type RalphRunPauseReasonCode = 'token_limit';
+
+export interface RalphRunPauseReason {
+  code: RalphRunPauseReasonCode;
+  message: string;
+}
+
 export interface DoctorCheck {
   id: string;
   label: string;
@@ -241,6 +253,7 @@ export interface RalphConfig {
   executionSkills: RalphExecutionSkill[];
   plans: RalphPrdPlan[];
   maxIterations: number;
+  tokenBudget: RalphTokenBudget | null;
   schedule: ScheduleMode;
   verbose: boolean;
   workspaceStrategy: WorkspaceStrategy;
@@ -302,6 +315,7 @@ export interface RalphRunSummary {
   tool: ProviderName;
   schedule: ScheduleMode;
   maxIterations: number;
+  pauseReason: RalphRunPauseReason | null;
   usageTotals: RalphUsageTotals | null;
   finalBranchName: string | null;
   contexts: RalphContextSnapshot[];

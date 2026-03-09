@@ -1,6 +1,6 @@
 import { stripVTControlCharacters } from 'node:util';
 
-import type { ProviderName, RalphUsageTotals } from './types.js';
+import type { ProviderName, RalphTokenBudget, RalphUsageTotals } from './types.js';
 
 type UsageField = keyof RalphUsageTotals;
 type UsageValue = RalphUsageTotals[UsageField];
@@ -9,6 +9,15 @@ interface UsageCandidate {
   usage: RalphUsageTotals;
   score: number;
   index: number;
+}
+
+export interface RalphTokenBudgetStatus {
+  limitTokens: number;
+  baselineTokens: number;
+  totalTokens: number | null;
+  windowTokens: number | null;
+  remainingTokens: number | null;
+  exhausted: boolean;
 }
 
 export interface UsageTracker {
@@ -810,6 +819,29 @@ export function resolveUsageTotalTokens(usage: RalphUsageTotals | null | undefin
   );
 
   return fields.length > 0 ? fields.reduce((total, value) => total + value, 0) : null;
+}
+
+export function resolveTokenBudgetStatus(
+  budget: RalphTokenBudget | null | undefined,
+  usage: RalphUsageTotals | null | undefined
+): RalphTokenBudgetStatus | null {
+  if (!budget || !Number.isFinite(budget.limitTokens) || budget.limitTokens < 1) {
+    return null;
+  }
+
+  const baselineTokens = Math.max(0, Math.trunc(budget.baselineTokens));
+  const totalTokens = resolveUsageTotalTokens(usage);
+  const windowTokens = totalTokens === null ? null : Math.max(0, totalTokens - baselineTokens);
+  const remainingTokens = windowTokens === null ? null : Math.max(0, budget.limitTokens - windowTokens);
+
+  return {
+    limitTokens: Math.trunc(budget.limitTokens),
+    baselineTokens,
+    totalTokens,
+    windowTokens,
+    remainingTokens,
+    exhausted: windowTokens !== null && windowTokens >= budget.limitTokens
+  };
 }
 
 export function extractUsageTotalsFromOutput(output: string, provider?: ProviderName): RalphUsageTotals | null {

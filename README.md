@@ -118,6 +118,7 @@ Why it works well in practice:
 - Each iteration is a full pass across a PRD backlog, not a budget for a single backlog item.
 - Ralphi consumes the full configured PRD pass budget unless a blocking error stops the run. If implementation finishes early, the remaining passes are used for verification, regression checks, polish, and documentation updates.
 - If the iteration budget ends before the PRD is truly done, Ralphi pauses the run and tells you work is still pending instead of marking it complete.
+- You can add a full-run token budget before launch; when the run reaches it, Ralphi pauses and lets you abort, continue with a fresh limit, or continue without limits.
 - While you are typing in a title, description, or other text field, character shortcuts stay inside the editor so your text is not interrupted.
 
 Typical dashboard flow:
@@ -128,7 +129,7 @@ Typical dashboard flow:
 4. Select one or more PRDs from `docs/prds/`, or create a new one from a short brief.
 5. Review and adjust the generated backlog.
 6. If you selected multiple PRDs, define any dependencies between them.
-7. Choose schedule, iterations, workspace preferences, and execution environment.
+7. Choose schedule, iterations, an optional full-run token budget, workspace preferences, and execution environment.
 8. Launch the run.
 9. Follow the live status until the run finishes or needs your decision.
 10. Resume, restart, or move on to the next run from the same interface.
@@ -532,6 +533,7 @@ Common options:
 | `--prds file1,file2` | Run one or more PRD files. |
 | `--create-prd "brief"` | Create a draft PRD from a short description. |
 | `--max-iterations N` | Set the default PRD pass limit. |
+| `--max-tokens N` | Set a full execution token budget that pauses the run at the limit. |
 | `--per-prd-iterations 5,3,2` | Give each selected PRD a different pass limit. |
 | `--schedule round-robin\|per-prd\|parallel` | Choose how multiple PRDs should be scheduled. |
 | `--workspace worktree\|shared` | Choose the workspace mode for single-PRD runs. Multi-PRD runs use worktrees automatically. |

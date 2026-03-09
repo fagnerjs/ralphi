@@ -45,7 +45,9 @@ import {
   createUsageTracker,
   extractUsageTotalsFromOutput,
   fillUsageTotals,
+  formatTokenCount,
   mergeUsageTotals,
+  resolveTokenBudgetStatus,
   usageTotalsEqual
 } from './usage.js';
 import {
@@ -77,6 +79,63 @@ interface InternalContext {
   sourceMetaPath: string;
   devcontainerReady: boolean;
   provisionedSkillPaths: string[];
+}
+
+const TOKEN_BUDGET_PAUSE_STEP = 'Paused at token limit';
+
+function resolveRunUsageTotals(contexts: InternalContext[]): RalphRunSummary['usageTotals'] {
+  return aggregateUsageTotals(contexts.map(context => context.snapshot.usageTotals));
+}
+
+function buildTokenBudgetPauseReason(config: RalphConfig, contexts: InternalContext[]): RalphRunSummary['pauseReason'] {
+  const status = resolveTokenBudgetStatus(config.tokenBudget, resolveRunUsageTotals(contexts));
+  if (!status?.exhausted) {
+    return null;
+  }
+
+  if (contexts.some(context => !executionComplete(context.snapshot) && Boolean(context.snapshot.lastError || context.snapshot.lastFailure))) {
+    return null;
+  }
+
+  const usedLabel = formatTokenCount(status.windowTokens);
+  const limitLabel = formatTokenCount(status.limitTokens);
+  return {
+    code: 'token_limit',
+    message:
+      usedLabel && limitLabel
+        ? `Token limit reached: ${usedLabel} / ${limitLabel} tokens used since the last budget reset`
+        : 'Token limit reached.'
+  };
+}
+
+async function pauseForTokenBudget(config: RalphConfig, contexts: InternalContext[], reporter?: RalphReporter): Promise<boolean> {
+  const pauseReason = buildTokenBudgetPauseReason(config, contexts);
+  if (!pauseReason) {
+    return false;
+  }
+
+  const pendingContexts = contexts.filter(
+    context => !executionComplete(context.snapshot) && !context.snapshot.lastError && !context.snapshot.lastFailure
+  );
+  if (pendingContexts.length === 0) {
+    return true;
+  }
+
+  const shouldEmit = pendingContexts.some(context => context.snapshot.lastStep !== TOKEN_BUDGET_PAUSE_STEP);
+  for (const context of pendingContexts) {
+    context.snapshot.status = 'queued';
+    context.snapshot.lastStep = TOKEN_BUDGET_PAUSE_STEP;
+  }
+
+  if (shouldEmit) {
+    await emit(reporter, {
+      type: 'boot-log',
+      level: 'warning',
+      message: pauseReason.message
+    });
+  }
+
+  return true;
 }
 
 interface ProviderExecutionResult {
@@ -2106,6 +2165,10 @@ async function runRoundRobin(
       return;
     }
 
+    if (await pauseForTokenBudget(config, orderedContexts, reporter)) {
+      return;
+    }
+
     let progressed = false;
 
     await emit(reporter, {
@@ -2115,6 +2178,10 @@ async function runRoundRobin(
     });
 
     for (const context of orderedContexts) {
+      if (await pauseForTokenBudget(config, orderedContexts, reporter)) {
+        return;
+      }
+
       if (iterationBudgetConsumed(context.snapshot)) {
         continue;
       }
@@ -2163,6 +2230,10 @@ async function runPerPrd(
   const orderedContexts = orderContextsByDependency(contexts);
 
   for (const context of orderedContexts) {
+    if (await pauseForTokenBudget(config, orderedContexts, reporter)) {
+      return;
+    }
+
     if (!dependencyReady(config, context, contexts)) {
       await markContextWaitingForDependency(context, contexts, reporter);
       continue;
@@ -2176,6 +2247,10 @@ async function runPerPrd(
     });
 
     while (context.snapshot.iterationsRun < context.snapshot.iterationsTarget) {
+      if (await pauseForTokenBudget(config, orderedContexts, reporter)) {
+        return;
+      }
+
       if (!dependencyReady(config, context, contexts)) {
         await markContextWaitingForDependency(context, contexts, reporter);
         break;
@@ -2217,6 +2292,10 @@ async function runParallel(
       });
 
       while (context.snapshot.iterationsRun < context.snapshot.iterationsTarget) {
+        if (await pauseForTokenBudget(config, orderedContexts, reporter)) {
+          break;
+        }
+
         if (!dependencyReady(config, context, contexts)) {
           await markContextWaitingForDependency(context, contexts, reporter);
           const dependency = findContextByPlanId(contexts, context.snapshot.dependsOnPlanId);
@@ -2492,6 +2571,7 @@ export async function runRalphi(config: RalphConfig, reporter?: RalphReporter): 
       await runRoundRobin(config, contexts, reporter, preparedWorkspace);
     }
 
+    await pauseForTokenBudget(config, contexts, reporter);
     await finalizeCompletedContexts(config, contexts, reporter);
     let finalBranchName: string | null = null;
     if (contexts.length > 1 && contexts.every(context => executionComplete(context.snapshot))) {
@@ -2510,18 +2590,20 @@ export async function runRalphi(config: RalphConfig, reporter?: RalphReporter): 
       }
     }
 
+    const pauseReason = buildTokenBudgetPauseReason(config, contexts);
     const summary: RalphRunSummary = {
       completed: contexts.every(context => executionComplete(context.snapshot)) && (contexts.length <= 1 || Boolean(finalBranchName)),
       tool: config.tool,
       schedule: config.schedule,
       maxIterations: Math.max(...contexts.map(context => context.snapshot.iterationsTarget), 0),
-      usageTotals: aggregateUsageTotals(contexts.map(context => context.snapshot.usageTotals)),
+      pauseReason,
+      usageTotals: resolveRunUsageTotals(contexts),
       finalBranchName,
       contexts: contexts.map(context => ({ ...context.snapshot }))
     };
 
     await Promise.all(contexts.map(context => saveContextCheckpoint({ ...context.snapshot }).catch(() => undefined)));
-    await saveRunSession(config.ralphDir, config, summary.completed ? 'complete' : 'blocked', summary);
+    await saveRunSession(config.ralphDir, config, summary.completed ? 'complete' : runSessionStatus(contexts), summary);
 
     await emit(reporter, {
       type: 'summary',

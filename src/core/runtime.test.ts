@@ -661,6 +661,156 @@ test('runRalphi tracks provider usage totals and emits live usage updates', asyn
   }
 });
 
+test('runRalphi pauses when the configured token budget is exhausted', async () => {
+  const fixture = await createTempProject('ralphi-runtime-');
+  const previousPath = process.env.PATH;
+
+  try {
+    const releasePrd = path.join(fixture.rootDir, 'docs', 'prds', 'release.json');
+    const binDir = path.join(fixture.rootDir, 'bin');
+
+    await writeFile(path.join(fixture.rootDir, 'README.md'), '# Fixture repository\n', 'utf8');
+    await writeJsonFile(releasePrd, {
+      branchName: 'feature/release',
+      userStories: [
+        {
+          id: 'US-001',
+          title: 'Ship the release flow',
+          description: 'Deliver the release flow.',
+          acceptanceCriteria: ['Create release artifacts'],
+          passes: false
+        }
+      ]
+    });
+    await writeFakeCodex(binDir);
+
+    await runGitOk(fixture.rootDir, ['init', '-b', 'main']);
+    await runGitOk(fixture.rootDir, ['config', 'user.name', 'Ralphi Test']);
+    await runGitOk(fixture.rootDir, ['config', 'user.email', 'ralphi@example.com']);
+    await runGitOk(fixture.rootDir, ['add', '.']);
+    await runGitOk(fixture.rootDir, ['commit', '-m', 'chore: seed fixture']);
+
+    process.env.PATH = previousPath ? `${binDir}${path.delimiter}${previousPath}` : binDir;
+
+    const config = makeConfig(fixture.rootDir, {
+      tool: 'codex',
+      plans: [
+        makePlan(releasePrd, {
+          id: 'release',
+          title: 'release',
+          branchName: 'feature/release',
+          iterations: 3
+        })
+      ],
+      maxIterations: 3,
+      tokenBudget: {
+        limitTokens: 1620,
+        baselineTokens: 0
+      },
+      schedule: 'per-prd',
+      workspaceStrategy: 'shared'
+    });
+
+    const summary = await runRalphi(config);
+    const pendingSession = await loadPendingRunSession(fixture.ralphDir);
+
+    assert.equal(summary.completed, false);
+    assert.equal(summary.pauseReason?.code, 'token_limit');
+    assert.match(summary.pauseReason?.message ?? '', /1,620 \/ 1,620 tokens/);
+    assert.equal(summary.contexts[0]?.iterationsRun, 1);
+    assert.equal(summary.contexts[0]?.lastStep, 'Paused at token limit');
+    assert.equal(summary.contexts[0]?.status, 'queued');
+    assert.equal(summary.usageTotals?.totalTokens, 1620);
+    assert.equal(pendingSession?.status, 'running');
+  } finally {
+    process.env.PATH = previousPath;
+    await fixture.cleanup();
+  }
+});
+
+test('runRalphi resumes after a token budget pause when a new budget starts from current usage', async () => {
+  const fixture = await createTempProject('ralphi-runtime-');
+  const previousPath = process.env.PATH;
+
+  try {
+    const releasePrd = path.join(fixture.rootDir, 'docs', 'prds', 'release.json');
+    const binDir = path.join(fixture.rootDir, 'bin');
+
+    await writeFile(path.join(fixture.rootDir, 'README.md'), '# Fixture repository\n', 'utf8');
+    await writeJsonFile(releasePrd, {
+      branchName: 'feature/release',
+      userStories: [
+        {
+          id: 'US-001',
+          title: 'Ship the release flow',
+          description: 'Deliver the release flow.',
+          acceptanceCriteria: ['Create release artifacts'],
+          passes: false
+        }
+      ]
+    });
+    await writeFakeCodex(binDir);
+
+    await runGitOk(fixture.rootDir, ['init', '-b', 'main']);
+    await runGitOk(fixture.rootDir, ['config', 'user.name', 'Ralphi Test']);
+    await runGitOk(fixture.rootDir, ['config', 'user.email', 'ralphi@example.com']);
+    await runGitOk(fixture.rootDir, ['add', '.']);
+    await runGitOk(fixture.rootDir, ['commit', '-m', 'chore: seed fixture']);
+
+    process.env.PATH = previousPath ? `${binDir}${path.delimiter}${previousPath}` : binDir;
+
+    const config = makeConfig(fixture.rootDir, {
+      tool: 'codex',
+      plans: [
+        makePlan(releasePrd, {
+          id: 'release',
+          title: 'release',
+          branchName: 'feature/release',
+          iterations: 3
+        })
+      ],
+      maxIterations: 3,
+      tokenBudget: {
+        limitTokens: 1620,
+        baselineTokens: 0
+      },
+      schedule: 'per-prd',
+      workspaceStrategy: 'shared'
+    });
+
+    const firstSummary = await runRalphi(config);
+    assert.equal(firstSummary.pauseReason?.code, 'token_limit');
+
+    const resumedEvents: Array<Record<string, unknown>> = [];
+    const summary = await runRalphi(
+      {
+        ...config,
+        tokenBudget: {
+          limitTokens: 4000,
+          baselineTokens: 1620
+        }
+      },
+      async event => {
+        resumedEvents.push(event as Record<string, unknown>);
+      }
+    );
+
+    const resumedIterations = resumedEvents
+      .filter(event => event.type === 'iteration-start')
+      .map(event => event.prdIteration);
+
+    assert.deepEqual(resumedIterations, [2, 3]);
+    assert.equal(summary.completed, true);
+    assert.equal(summary.pauseReason, null);
+    assert.equal(summary.contexts[0]?.iterationsRun, 3);
+    assert.equal(summary.usageTotals?.totalTokens, 4860);
+    assert.equal(await loadPendingRunSession(fixture.ralphDir), null);
+  } finally {
+    process.env.PATH = previousPath;
+    await fixture.cleanup();
+  }
+});
+
 test('runRalphi lets dependent PRDs consume their full budget in round-robin mode', async () => {
   const fixture = await createTempProject('ralphi-runtime-');
   const previousPath = process.env.PATH;

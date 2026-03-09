@@ -123,6 +123,7 @@ type Screen =
   | 'environment'
   | 'schedule'
   | 'iterations'
+  | 'token-budget'
   | 'review'
   | 'skills-menu'
   | 'skill-catalog'
@@ -1214,6 +1215,8 @@ function WizardApp({
   const [backlogPolicyWindowStart, setBacklogPolicyWindowStart] = useState(0);
   const [iterationCursor, setIterationCursor] = useState(0);
   const [iterationWindowStart, setIterationWindowStart] = useState(0);
+  const [tokenBudgetEnabled, setTokenBudgetEnabled] = useState(Boolean(initial.tokenBudget));
+  const [tokenBudgetInput, setTokenBudgetInput] = useState(initial.tokenBudget ? String(initial.tokenBudget.limitTokens) : '');
   const [skillMenuIndex, setSkillMenuIndex] = useState(0);
   const [skillCatalogCursor, setSkillCatalogCursor] = useState(0);
   const [skillCatalogWindowStart, setSkillCatalogWindowStart] = useState(0);
@@ -1419,6 +1422,14 @@ function WizardApp({
   );
   const activeProviderSkillRow = providerSkillRows[providerSkillCursor] ?? providerSkillRows[0] ?? null;
   const activeProviderSkill = activeProviderSkillRow?.kind === 'skill' ? activeProviderSkillRow.skill : null;
+  const parsedTokenBudget = useMemo(() => {
+    if (!tokenBudgetEnabled) {
+      return null;
+    }
+
+    const value = Number(tokenBudgetInput);
+    return Number.isInteger(value) && value > 0 ? value : null;
+  }, [tokenBudgetEnabled, tokenBudgetInput]);
   const reviewProjectConfig = useMemo(
     () => ({
       ...projectConfig,
@@ -1441,6 +1452,12 @@ function WizardApp({
       executionSkills: buildExecutionSkills(rootDir, activeProvider.value, reviewProjectConfig, activeSessionExecutionSkills),
       plans,
       maxIterations: Math.max(...plans.map(plan => plan.iterations), 1),
+      tokenBudget: parsedTokenBudget
+        ? {
+            limitTokens: parsedTokenBudget,
+            baselineTokens: 0
+          }
+        : null,
       schedule: activeSchedule.value,
       workspaceStrategy: launchPlanWorkspaceStrategy,
       executionEnvironment: activeEnvironment.value,
@@ -1457,6 +1474,7 @@ function WizardApp({
       initial,
       launchPlanWorkspaceStrategy,
       plans,
+      parsedTokenBudget,
       projectBootstrap.devcontainerConfigPath,
       reviewProjectConfig,
       rootDir
@@ -2821,8 +2839,10 @@ function WizardApp({
         setScreen('environment');
       } else if (screen === 'iterations') {
         setScreen('schedule');
-      } else if (screen === 'review') {
+      } else if (screen === 'token-budget') {
         setScreen('iterations');
+      } else if (screen === 'review') {
+        setScreen('token-budget');
       } else if (screen === 'skill-catalog') {
         setScreen('skills-menu');
       } else if (screen === 'skill-input') {
@@ -3659,6 +3679,33 @@ function WizardApp({
           return;
         }
 
+        setScreen('token-budget');
+      }
+      return;
+    }
+
+    if (screen === 'token-budget') {
+      if (input === ' ' || key.tab) {
+        setTokenBudgetEnabled(current => !current);
+        return;
+      }
+
+      if (tokenBudgetEnabled && (key.backspace || key.delete)) {
+        setTokenBudgetInput(current => current.slice(0, -1));
+        return;
+      }
+
+      if (tokenBudgetEnabled && isPrintableInput(input) && /^[0-9]$/.test(input)) {
+        setTokenBudgetInput(current => `${current}${input}`.replace(/^0+/, '').slice(0, 9) || input);
+        return;
+      }
+
+      if (key.return) {
+        if (tokenBudgetEnabled && parsedTokenBudget === null) {
+          setNotice('The execution token limit must be a positive integer.');
+          return;
+        }
+
         setScreen('review');
       }
       return;
@@ -3967,6 +4014,7 @@ function WizardApp({
     if (screen === 'environment') return 4;
     if (screen === 'schedule') return 5;
     if (screen === 'iterations') return 6;
+    if (screen === 'token-budget') return 7;
     if (screen === 'review') return 7;
     return 1;
   })();
@@ -4777,6 +4825,25 @@ function WizardApp({
               </SectionPanel>
             )}
 
+            {screen === 'token-budget' && (
+              <SectionPanel title="Set execution token budget" subtitle="GUARDRAIL" flexGrow={1}>
+                <LabelValue label="Status" value={tokenBudgetEnabled ? 'enabled' : 'unlimited'} />
+                <LabelValue
+                  label="Limit"
+                  value={tokenBudgetEnabled ? (parsedTokenBudget ? `${parsedTokenBudget.toLocaleString('en-US')} tokens` : tokenBudgetInput || 'pending') : 'No limit'}
+                />
+                <Box marginTop={1} flexDirection="column">
+                  <Text color={palette.dim}>
+                    Ralphi pauses once the full execution reaches this token budget and waits for you to abort, continue with a new limit, or continue without limits.
+                  </Text>
+                </Box>
+                <Box marginTop={1} flexDirection="column">
+                  <HintLine>Space toggles the guardrail. Digits and Backspace edit the limit.</HintLine>
+                  <HintLine>Enter continues to launch review. The limit always starts from zero for a fresh run.</HintLine>
+                </Box>
+              </SectionPanel>
+            )}
+
             {screen === 'review' && (
               <SectionPanel title="Review launch plan" subtitle="READY" flexGrow={1}>
                 <LabelValue label="Context" value={contextLabel(initial.projectContextMode)} />
@@ -4784,6 +4851,7 @@ function WizardApp({
                 <LabelValue label="Skills" value={String(activeExecutionSkills.length)} />
                 <LabelValue label="Schedule" value={pickScheduleLabel(activeSchedule.value)} />
                 <LabelValue label="Workspace" value={launchPlanWorkspaceStrategy} />
+                <LabelValue label="Token budget" value={parsedTokenBudget ? `${parsedTokenBudget.toLocaleString('en-US')} tokens` : 'unlimited'} />
                 <LabelValue label="PRDs" value={String(selectedPrdPaths.length)} />
                 {dependencyCount > 0 ? <LabelValue label="Dependencies" value={String(dependencyCount)} /> : null}
                 {activeSchedule.value === 'parallel' && selectedPrdPaths.length === 1 ? <LabelValue label="Variants" value={String(plans.length)} /> : null}

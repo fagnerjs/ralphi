@@ -13,6 +13,7 @@ test('usage advertises the main run and maintenance commands', () => {
   assert.match(text, /ralphi doctor/);
   assert.match(text, /ralphi prompt preview --prds file1/);
   assert.match(text, /--create-prd \"brief\"/);
+  assert.match(text, /--max-tokens N/);
   assert.match(text, /copilot|cursor/);
 });
 
@@ -29,6 +30,8 @@ test('parseArgs handles run options and subcommands', () => {
     'devcontainer',
     '--max-iterations',
     '8',
+    '--max-tokens',
+    '32000',
     '--per-prd-iterations',
     '3,5'
   ]);
@@ -39,9 +42,28 @@ test('parseArgs handles run options and subcommands', () => {
   assert.equal(run.schedule, 'parallel');
   assert.equal(run.workspaceStrategy, 'shared');
   assert.equal(run.executionEnvironment, 'devcontainer');
+  assert.equal(run.maxTokens, 32000);
   assert.deepEqual(run.perPrdIterations, [3, 5]);
   assert.equal(subcommand.command, 'worktree-cleanup');
   assert.equal(subcommand.dryRun, true);
+});
+
+test('createInitialConfig turns --max-tokens into an execution token budget', async () => {
+  const fixture = await createTempProject('ralphi-cli-');
+
+  try {
+    const prdPath = path.join(fixture.rootDir, 'docs', 'prds', 'release.md');
+    await writeFile(prdPath, '# PRD: Release\n', 'utf8');
+
+    const config = await createInitialConfig(parseArgs(['--prds', 'docs/prds/release.md', '--max-tokens', '24000']), fixture.rootDir, fixture.rootDir);
+
+    assert.deepEqual(config.tokenBudget, {
+      limitTokens: 24000,
+      baselineTokens: 0
+    });
+  } finally {
+    await fixture.cleanup();
+  }
 });
 
 test('createInitialConfig applies project defaults and keeps devcontainer mode when the config exists', async () => {

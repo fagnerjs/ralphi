@@ -25,9 +25,11 @@ import {
   buildCostUsedLabel,
   buildTokensUsedLabel,
   buildUsageDisplayRows,
+  formatTokenCount,
   formatUsageCost,
   formatUsageTokenTotal,
-  hasUsageTotals
+  hasUsageTotals,
+  resolveTokenBudgetStatus
 } from '../core/usage.js';
 import { displayPath, pickScheduleLabel, truncateEnd, truncateMiddle } from '../core/utils.js';
 import { ArcadeCabinet } from './arcade.js';
@@ -56,6 +58,12 @@ interface DashboardState {
 interface DashboardResult {
   summary: RalphRunSummary;
   nextAction: 'exit' | 'restart-wizard' | 'resume-session' | 'restart-session' | 'discard-session';
+  tokenBudgetDecision: DashboardTokenBudgetDecision | null;
+}
+
+interface DashboardTokenBudgetDecision {
+  mode: 'limited' | 'unlimited';
+  limitTokens?: number;
 }
 
 interface DashboardNotification {
@@ -467,6 +475,10 @@ export function buildSummaryPauseReason(summary: RalphRunSummary): string | null
     return null;
   }
 
+  if (summary.pauseReason) {
+    return summary.pauseReason.message;
+  }
+
   if (summary.contexts.length === 1) {
     return buildContextPauseReason(summary.contexts[0]);
   }
@@ -516,6 +528,10 @@ export function formatContextIterations(context: RalphContextSnapshot | null | u
 function buildRunCompletionStatus(summary: RalphRunSummary): string {
   if (summary.completed) {
     return 'All tasks complete';
+  }
+
+  if (summary.pauseReason?.code === 'token_limit') {
+    return 'Token limit reached';
   }
 
   const pendingContexts = summary.contexts.filter(context => !isContextComplete(context));
@@ -881,6 +897,7 @@ function buildFallbackSummary(config: RalphConfig, contexts: RalphContextSnapsho
     tool: config.tool,
     schedule: config.schedule,
     maxIterations: config.maxIterations,
+    pauseReason: null,
     usageTotals: aggregateUsageTotals(contexts.map(context => context.usageTotals)),
     finalBranchName: null,
     contexts
@@ -893,6 +910,8 @@ function DashboardApp({ config, onExit }: { config: RalphConfig; onExit: (result
   const [selectedPane, setSelectedPane] = useState(0);
   const [closedPlanIds, setClosedPlanIds] = useState<Set<string>>(new Set());
   const [doneActionIndex, setDoneActionIndex] = useState(0);
+  const [editingTokenBudget, setEditingTokenBudget] = useState(false);
+  const [tokenBudgetInput, setTokenBudgetInput] = useState('');
   const [actionBusy, setActionBusy] = useState<string | null>(null);
   const [actionMessage, setActionMessage] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -975,6 +994,19 @@ function DashboardApp({ config, onExit }: { config: RalphConfig; onExit: (result
       aggregateUsageTotals(state.contexts.map(context => resolveContextUsageTotals(context))),
     [resolvedSummary, state.contexts]
   );
+  const tokenBudgetStatus = useMemo(
+    () => resolveTokenBudgetStatus(config.tokenBudget, runUsage),
+    [config.tokenBudget, runUsage]
+  );
+  const tokenBudgetValue = useMemo(() => {
+    if (!tokenBudgetStatus) {
+      return null;
+    }
+
+    const limit = formatTokenCount(tokenBudgetStatus.limitTokens) ?? String(tokenBudgetStatus.limitTokens);
+    const used = formatTokenCount(tokenBudgetStatus.windowTokens);
+    return used ? `${used} / ${limit}${tokenBudgetStatus.exhausted ? ' reached' : ''}` : `${limit} cap`;
+  }, [tokenBudgetStatus]);
   const runTokensUsedValue = useMemo(() => formatUsageTokenTotal(runUsage), [runUsage]);
   const runCostUsedValue = useMemo(() => formatUsageCost(runUsage?.totalCostUsd, runUsage?.currency), [runUsage]);
   const runCompletionRows = useMemo(() => {
@@ -987,6 +1019,7 @@ function DashboardApp({ config, onExit }: { config: RalphConfig; onExit: (result
       { label: 'PRDs', value: `${completed}/${resolvedSummary.contexts.length} complete` },
       { label: 'Pending', value: pending === 0 ? 'none' : `${pending} need attention` },
       ...(pauseReason ? [{ label: 'Reason', value: pauseReason }] : []),
+      ...(tokenBudgetValue ? [{ label: 'Token budget', value: tokenBudgetValue }] : []),
       {
         label: 'Commits',
         value: pending > 0 ? `${commits} recorded` : `${commits} ready for review`
@@ -994,7 +1027,7 @@ function DashboardApp({ config, onExit }: { config: RalphConfig; onExit: (result
       ...(resolvedSummary.finalBranchName ? [{ label: 'Final branch', value: resolvedSummary.finalBranchName }] : []),
       ...buildCompletionUsageRows(runUsage)
     ];
-  }, [resolvedSummary, runUsage]);
+  }, [resolvedSummary, runUsage, tokenBudgetValue]);
   const activeWorkspaceLabel = activeContext
     ? activeContext.worktreeRemoved
       ? `released · ${displayPath(activeContext.worktreePath ?? activeContext.workspaceDir, config.rootDir)}`
@@ -1022,15 +1055,16 @@ function DashboardApp({ config, onExit }: { config: RalphConfig; onExit: (result
       return [];
     }
 
-    const pauseReason = buildContextPauseReason(activeContext);
+    const pauseReason = buildContextPauseReason(activeContext) ?? (!resolvedSummary.completed ? resolvedSummary.pauseReason?.message ?? null : null);
     return [
       { label: 'Stories', value: activeContext.storyProgress },
       { label: 'Backlog', value: activeContext.backlogProgress },
       { label: 'Commit', value: activeCommitLabel },
       ...(pauseReason ? [{ label: 'Reason', value: pauseReason }] : []),
+      ...(tokenBudgetValue ? [{ label: 'Token budget', value: tokenBudgetValue }] : []),
       ...buildCompletionUsageRows(activeUsage)
     ];
-  }, [activeCommitLabel, activeContext, activeUsage]);
+  }, [activeCommitLabel, activeContext, activeUsage, resolvedSummary.completed, resolvedSummary.pauseReason, tokenBudgetValue]);
   const activeTouchedFiles = latestIteration?.touchedFiles ?? [];
   const activeTouchedSummary =
     activeTouchedFiles.length === 0
@@ -1050,11 +1084,30 @@ function DashboardApp({ config, onExit }: { config: RalphConfig; onExit: (result
         ? backlogStatusBadge(activeItem.status)
         : null;
   const hasPendingWork = Boolean(state.summary && !state.summary.completed) || state.phase === 'error';
+  const tokenBudgetPaused = resolvedSummary.pauseReason?.code === 'token_limit';
   const hasCheckpointedState = state.contexts.length > 0;
   const canRetryActiveContext = Boolean(
     activeContext?.lastFailure?.retryable && activeContext.lastFailure.retryCount === 0
   );
-  const doneActions = hasPendingWork
+  const doneActions = tokenBudgetPaused
+    ? [
+        {
+          id: 'abort-token-budget',
+          label: 'Abort execution',
+          description: 'Stop here, discard the saved runtime state, and return to the wizard.'
+        },
+        {
+          id: 'resume-with-new-token-limit',
+          label: 'Continue with new limit',
+          description: 'Set a fresh token budget that starts from the tokens already used.'
+        },
+        {
+          id: 'resume-without-token-limit',
+          label: 'Continue without limits',
+          description: 'Remove the execution token cap and resume from the last checkpoint.'
+        }
+      ]
+    : hasPendingWork
     ? [
         ...(canRetryActiveContext
           ? [
@@ -1149,10 +1202,14 @@ function DashboardApp({ config, onExit }: { config: RalphConfig; onExit: (result
     [activeItem?.steps, checklistTextWidth, detailLineLimit]
   );
 
-  const exitDashboard = (nextAction: DashboardResult['nextAction']): void => {
+  const exitDashboard = (
+    nextAction: DashboardResult['nextAction'],
+    tokenBudgetDecision: DashboardResult['tokenBudgetDecision'] = null
+  ): void => {
     onExit({
       summary: summaryRef.current ?? buildFallbackSummary(config, state.contexts),
-      nextAction
+      nextAction,
+      tokenBudgetDecision
     });
     exit();
   };
@@ -1281,6 +1338,41 @@ function DashboardApp({ config, onExit }: { config: RalphConfig; onExit: (result
         return;
       }
 
+      if (editingTokenBudget) {
+        if (key.escape) {
+          setEditingTokenBudget(false);
+          setTokenBudgetInput('');
+          setActionError(null);
+          return;
+        }
+
+        if (key.return) {
+          const nextLimit = Number(tokenBudgetInput);
+          if (!Number.isInteger(nextLimit) || nextLimit < 1) {
+            setActionError('Enter a positive integer token limit.');
+            return;
+          }
+
+          exitDashboard('resume-session', {
+            mode: 'limited',
+            limitTokens: nextLimit
+          });
+          return;
+        }
+
+        if (key.backspace || key.delete) {
+          setTokenBudgetInput(current => current.slice(0, -1));
+          setActionError(null);
+          return;
+        }
+
+        if (/^[0-9]$/.test(input)) {
+          setTokenBudgetInput(current => `${current}${input}`.replace(/^0+/, '').slice(0, 9) || input);
+          setActionError(null);
+        }
+        return;
+      }
+
       if (key.upArrow && doneActions.length > 0) {
         setDoneActionIndex(current => Math.max(0, current - 1));
         return;
@@ -1307,6 +1399,17 @@ function DashboardApp({ config, onExit }: { config: RalphConfig; onExit: (result
           void handleCreatePullRequest();
         } else if (action?.id === 'retry-last-iteration') {
           void handleRetryLastIteration();
+        } else if (action?.id === 'abort-token-budget') {
+          exitDashboard('discard-session');
+        } else if (action?.id === 'resume-with-new-token-limit') {
+          setEditingTokenBudget(true);
+          setTokenBudgetInput('');
+          setActionMessage(null);
+          setActionError(null);
+        } else if (action?.id === 'resume-without-token-limit') {
+          exitDashboard('resume-session', {
+            mode: 'unlimited'
+          });
         } else if (action?.id === 'resume-session') {
           exitDashboard('resume-session');
         } else if (action?.id === 'restart-session') {
@@ -1719,18 +1822,28 @@ function DashboardApp({ config, onExit }: { config: RalphConfig; onExit: (result
                       </Box>
                       <Text color={palette.accent}>Next actions</Text>
                       <Box marginTop={1} flexDirection="column">
-                        {doneActions.map((action, index) => (
-                          <Box key={action.id} flexDirection="column" marginBottom={1}>
-                            <Text color={index === doneActionIndex ? palette.accent : palette.text} wrap="truncate-end">
-                              {`${index === doneActionIndex ? '> ' : '  '}${truncateEnd(action.label, completionTextWidth)}`}
+                        {editingTokenBudget ? (
+                          <>
+                            <Text color={palette.accent}>New token limit</Text>
+                            <Text color={palette.text}>{tokenBudgetInput || ' '}</Text>
+                            <Text color={palette.dim} wrap="truncate-end">
+                              Enter a positive integer budget that starts from the current usage total.
                             </Text>
-                            <Box marginLeft={3}>
-                              <Text color={palette.dim} wrap="truncate-end">
-                                {truncateEnd(action.description, completionTextWidth - 3)}
+                          </>
+                        ) : (
+                          doneActions.map((action, index) => (
+                            <Box key={action.id} flexDirection="column" marginBottom={1}>
+                              <Text color={index === doneActionIndex ? palette.accent : palette.text} wrap="truncate-end">
+                                {`${index === doneActionIndex ? '> ' : '  '}${truncateEnd(action.label, completionTextWidth)}`}
                               </Text>
+                              <Box marginLeft={3}>
+                                <Text color={palette.dim} wrap="truncate-end">
+                                  {truncateEnd(action.description, completionTextWidth - 3)}
+                                </Text>
+                              </Box>
                             </Box>
-                          </Box>
-                        ))}
+                          ))
+                        )}
                       </Box>
                       {actionBusy ? <Text color={palette.accent}>{actionBusy}</Text> : null}
                       {actionMessage ? <Text color={palette.green}>{truncateEnd(actionMessage, completionTextWidth)}</Text> : null}
@@ -1751,8 +1864,17 @@ function DashboardApp({ config, onExit }: { config: RalphConfig; onExit: (result
                 <HintLine>Press G to open the ARCADE menu while Ralphi keeps working.</HintLine>
                 {state.phase === 'done' || state.phase === 'error' ? (
                   <>
-                    <HintLine>Use ↑ ↓ to choose the next action for this run.</HintLine>
-                    <HintLine>Press Enter to run the selected action or q to leave the runtime.</HintLine>
+                    {editingTokenBudget ? (
+                      <>
+                        <HintLine>Type digits and Backspace to set the new token limit.</HintLine>
+                        <HintLine>Press Enter to resume or Esc to cancel this prompt.</HintLine>
+                      </>
+                    ) : (
+                      <>
+                        <HintLine>Use ↑ ↓ to choose the next action for this run.</HintLine>
+                        <HintLine>Press Enter to run the selected action or q to leave the runtime.</HintLine>
+                      </>
+                    )}
                   </>
                 ) : (
                   <>
