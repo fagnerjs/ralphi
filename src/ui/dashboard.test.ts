@@ -208,8 +208,10 @@ test('dashboardReducer summarizes completion with success notifications and usag
     assert.equal(next.phase, 'done');
     assert.equal(next.notifications[0]?.title, 'Execution finished');
     assert.match(next.notifications[0]?.body ?? '', /1\/1 PRDs complete/);
-    assert.match(next.notifications[0]?.body ?? '', /1,620 tokens/);
+    assert.match(next.notifications[0]?.body ?? '', /1,620 tokens used/);
+    assert.match(next.notifications[0]?.body ?? '', /\$0\.42 spent/);
     assert.match(buildRunSummaryText(summary), /1 commit ready for review/);
+    assert.match(buildRunSummaryText(summary), /\$0\.42 spent/);
   } finally {
     await fixture.cleanup();
   }
@@ -311,6 +313,25 @@ test('resolveContextUsageTotals falls back to iteration history when the context
   } finally {
     await fixture.cleanup();
   }
+});
+
+test('buildCompletionUsageRows exposes cost used when spend is available', () => {
+  const rows = buildCompletionUsageRows(makeUsageTotals({
+    totalTokens: 1620,
+    totalCostUsd: 0.42,
+    currency: 'USD'
+  }));
+
+  assert.deepEqual(rows, [
+    {
+      label: 'Tokens',
+      value: '1,620'
+    },
+    {
+      label: 'Cost Used',
+      value: '$0.42'
+    }
+  ]);
 });
 
 test('buildCompletionUsageRows keeps a tokens row even when only input and output counters are available', () => {

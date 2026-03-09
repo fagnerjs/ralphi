@@ -22,7 +22,6 @@ import type {
 } from '../core/types.js';
 import {
   aggregateUsageTotals,
-  buildCompactUsageSummary,
   buildCostUsedLabel,
   buildTokensUsedLabel,
   buildUsageDisplayRows,
@@ -426,9 +425,8 @@ export function buildRunSummaryText(summary: RalphRunSummary): string {
   const completed = summary.contexts.filter(context => isContextComplete(context)).length;
   const commits = summary.contexts.filter(context => Boolean(context.commitSha)).length;
   const pending = Math.max(0, summary.contexts.length - completed);
-  const usageSummary = buildCompactUsageSummary(
-    summary.usageTotals ?? aggregateUsageTotals(summary.contexts.map(context => resolveContextUsageTotals(context)))
-  );
+  const usageTotals = summary.usageTotals ?? aggregateUsageTotals(summary.contexts.map(context => resolveContextUsageTotals(context)));
+  const usageSummary = [buildTokensUsedLabel(usageTotals), buildCostUsedLabel(usageTotals)].filter(Boolean).join(' · ');
 
   if (pending > 0) {
     const reason = buildSummaryPauseReason(summary);
@@ -543,14 +541,15 @@ export function buildCompletionUsageRows(
 ): Array<{ label: string; value: string }> {
   const rows = buildUsageDisplayRows(usage);
   const spendRow = rows.find(row => row.label === 'Spend');
+  const costRow = spendRow ? { label: 'Cost Used', value: spendRow.value } : null;
   const totalTokensRow = rows.find(row => row.label === 'Tokens');
 
   if (totalTokensRow) {
-    return spendRow ? [totalTokensRow, spendRow] : [totalTokensRow];
+    return costRow ? [totalTokensRow, costRow] : [totalTokensRow];
   }
 
   if (!hasUsageTotals(usage)) {
-    return spendRow ? [spendRow] : [];
+    return costRow ? [costRow] : [];
   }
 
   const tokenBreakdown = rows
@@ -559,7 +558,7 @@ export function buildCompletionUsageRows(
     .join(' · ');
 
   const fallbackRows = tokenBreakdown ? [{ label: 'Tokens', value: tokenBreakdown }] : [];
-  return spendRow ? [...fallbackRows, spendRow] : fallbackRows;
+  return costRow ? [...fallbackRows, costRow] : fallbackRows;
 }
 
 function buildFailureSuggestion(message: string, context: RalphContextSnapshot | null): string {
