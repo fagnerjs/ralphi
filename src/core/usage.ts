@@ -902,6 +902,11 @@ export function buildTokensUsedLabel(usage: RalphUsageTotals | null | undefined)
   return total ? `${total} tokens used` : null;
 }
 
+export function buildCostUsedLabel(usage: RalphUsageTotals | null | undefined): string | null {
+  const totalCost = formatUsageCost(usage?.totalCostUsd, usage?.currency);
+  return totalCost ? `${totalCost} spent` : null;
+}
+
 export function buildUsageDisplayRows(usage: RalphUsageTotals | null | undefined): Array<{ label: string; value: string }> {
   if (!hasUsageTotals(usage)) {
     return [];

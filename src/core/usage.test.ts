@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import {
   aggregateUsageTotals,
   buildCompactUsageSummary,
+  buildCostUsedLabel,
   buildUsageDisplayRows,
   extractUsageTotalsFromOutput,
   formatUsageCost,
@@ -245,6 +246,15 @@ test('mergeUsageTotals and aggregateUsageTotals sum optional token counters safe
   assert.equal(merged?.totalTokens, 250);
   assert.equal(merged?.totalCostUsd, 0.15000000000000002);
   assert.deepEqual(aggregated, merged);
+});
+
+test('buildCostUsedLabel formats accumulated spend for overview summaries', () => {
+  const usage = makeUsageTotals({
+    totalCostUsd: 1.2345,
+    currency: 'USD'
+  });
+
+  assert.equal(buildCostUsedLabel(usage), '$1.2345 spent');
 });
 
 test('buildUsageDisplayRows and buildCompactUsageSummary format tokens and spend for summaries', () => {

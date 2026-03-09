@@ -23,8 +23,10 @@ import type {
 import {
   aggregateUsageTotals,
   buildCompactUsageSummary,
+  buildCostUsedLabel,
   buildTokensUsedLabel,
   buildUsageDisplayRows,
+  formatUsageCost,
   formatUsageTokenTotal,
   hasUsageTotals
 } from '../core/usage.js';
@@ -967,6 +969,7 @@ function DashboardApp({ config, onExit }: { config: RalphConfig; onExit: (result
     [resolvedSummary, state.contexts]
   );
   const runTokensUsedValue = useMemo(() => formatUsageTokenTotal(runUsage), [runUsage]);
+  const runCostUsedValue = useMemo(() => formatUsageCost(runUsage?.totalCostUsd, runUsage?.currency), [runUsage]);
   const runCompletionRows = useMemo(() => {
     const completed = resolvedSummary.contexts.filter(context => isContextComplete(context)).length;
     const commits = resolvedSummary.contexts.filter(context => Boolean(context.commitSha)).length;
@@ -1487,6 +1490,7 @@ function DashboardApp({ config, onExit }: { config: RalphConfig; onExit: (result
                       valueWidth={detailValueWidth}
                     />
                     <LabelValue label="Tokens Used" value={runTokensUsedValue ?? 'pending'} valueWidth={detailValueWidth} />
+                    <LabelValue label="Cost Used" value={runCostUsedValue ?? 'pending'} valueWidth={detailValueWidth} />
                   </Box>
                 </SectionPanel>
 
@@ -1513,8 +1517,9 @@ function DashboardApp({ config, onExit }: { config: RalphConfig; onExit: (result
                         <Text color={palette.dim}>Contexts will appear after bootstrapping finishes.</Text>
                       ) : (
                         visibleContexts.slice(-overviewQueueLineLimit).map(context => {
-                          const tokensUsedLabel = buildTokensUsedLabel(resolveContextUsageTotals(context));
-                          const detailLabel = `${context.backlogProgress}${tokensUsedLabel ? ` (${tokensUsedLabel})` : ''}`;
+                          const usageTotals = resolveContextUsageTotals(context);
+                          const usageLabels = [buildTokensUsedLabel(usageTotals), buildCostUsedLabel(usageTotals)].filter(Boolean).join(' · ');
+                          const detailLabel = `${context.backlogProgress}${usageLabels ? ` (${usageLabels})` : ''}`;
 
                           return (
                             <Box key={context.planId} justifyContent="space-between">
