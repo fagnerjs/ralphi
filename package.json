@@ -1,6 +1,6 @@
 {
   "name": "@fagnerjs/ralphi",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "description": "Ralphi is an **Autonomous AI coding loop** for PRD-driven execution.",
   "type": "module",
   "license": "MIT",
