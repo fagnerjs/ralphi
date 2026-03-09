@@ -437,6 +437,10 @@ export function buildRunSummaryText(summary: RalphRunSummary): string {
   return `${completed}/${summary.contexts.length} PRDs complete with ${commits} commit${commits === 1 ? '' : 's'} ready for review.${finalBranchSummary}${usageSummary ? ` Usage: ${usageSummary}.` : ''}`;
 }
 
+function formatPassBudgetStatus(): string {
+  return 'All configured passes used';
+}
+
 export function buildContextPauseReason(context: RalphContextSnapshot | null | undefined): string | null {
   if (!context || isContextComplete(context)) {
     return null;
@@ -448,7 +452,7 @@ export function buildContextPauseReason(context: RalphContextSnapshot | null | u
   }
 
   if (context.iterationsTarget > 0 && context.iterationsRun >= context.iterationsTarget) {
-    return `stopped after ${context.iterationsRun}/${context.iterationsTarget} iteration${context.iterationsTarget === 1 ? '' : 's'} with work still pending`;
+    return 'All configured passes used; work still pending';
   }
 
   return 'work still pending';
@@ -474,7 +478,7 @@ export function buildSummaryPauseReason(summary: RalphRunSummary): string | null
   const parts: string[] = [];
 
   if (iterationLimited > 0) {
-    parts.push(`${iterationLimited} reached the configured iteration limit`);
+    parts.push(`${iterationLimited} PRD${iterationLimited === 1 ? '' : 's'} used all configured passes`);
   }
 
   if (blocked > 0) {
@@ -514,7 +518,7 @@ function buildRunCompletionStatus(summary: RalphRunSummary): string {
   if (pendingContexts.length === 1) {
     const pendingContext = pendingContexts[0];
     if (pendingContext && !pendingContext.lastFailure && !pendingContext.lastError && pendingContext.iterationsTarget > 0 && pendingContext.iterationsRun >= pendingContext.iterationsTarget) {
-      return `Paused after ${pendingContext.iterationsRun}/${pendingContext.iterationsTarget} iteration${pendingContext.iterationsTarget === 1 ? '' : 's'}`;
+      return formatPassBudgetStatus();
     }
   }
 

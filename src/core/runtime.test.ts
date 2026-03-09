@@ -112,6 +112,105 @@ async function writeFakeCodex(binDir: string): Promise<string> {
   return writeExecutable(binDir, 'codex', body);
 }
 
+async function writeBudgetExhaustedDependencyCodex(binDir: string): Promise<string> {
+  const body = [
+    '#!/usr/bin/env bash',
+    'set -euo pipefail',
+    'prompt_file="$(mktemp)"',
+    'cat > "$prompt_file"',
+    "node - \"$prompt_file\" <<'NODE'",
+    "const fs = require('fs');",
+    "const path = require('path');",
+    "const { execFileSync } = require('child_process');",
+    '',
+    "const promptPath = process.argv[2];",
+    "const prompt = fs.readFileSync(promptPath, 'utf8');",
+    '',
+    'function readField(label) {',
+    "  const prefix = '- ' + label + ': ';",
+    "  const line = prompt.split(/\\r?\\n/).find(candidate => candidate.startsWith(prefix));",
+    "  return line ? line.slice(prefix.length).trim() : '';",
+    '}',
+    '',
+    '(async () => {',
+    "  const sourcePrd = readField('Source PRD');",
+    "  const prdJsonPath = readField('PRD JSON path');",
+    "  const backlogPath = readField('Backlog path');",
+    "  const progressFilePath = readField('Progress log');",
+    "  const branchName = execFileSync('git', ['branch', '--show-current'], { cwd: process.cwd(), encoding: 'utf8' }).trim();",
+    "  const featuresDir = path.join(process.cwd(), 'features');",
+    "  const prdName = path.basename(sourcePrd);",
+    '',
+    "  fs.mkdirSync(featuresDir, { recursive: true });",
+    '',
+    "  const prd = JSON.parse(fs.readFileSync(prdJsonPath, 'utf8'));",
+    "  const backlog = JSON.parse(fs.readFileSync(backlogPath, 'utf8'));",
+    '',
+    "  if (prdName.includes('foundation')) {",
+    "    fs.writeFileSync(path.join(featuresDir, 'foundation.txt'), 'foundation baseline on ' + branchName + '\\n', 'utf8');",
+    '    backlog.activeItemId = backlog.items?.[0]?.id ?? null;',
+    "    backlog.activeStepId = backlog.items?.[0]?.steps?.[0]?.id ?? null;",
+    '    backlog.items = (backlog.items ?? []).map(item => ({',
+    '      ...item,',
+    "      status: item.status === 'disabled' ? 'disabled' : 'pending',",
+    '      steps: (item.steps ?? []).map(step => ({',
+    '        ...step,',
+    "        status: step.status === 'disabled' ? 'disabled' : 'pending'",
+    '      }))',
+    '    }));',
+    '    prd.userStories = (prd.userStories ?? []).map((story, index) => ({',
+    '      ...story,',
+    "      id: story.id ?? ('US-' + String(index + 1).padStart(3, '0')),",
+    '      passes: false,',
+    "      notes: 'Baseline prepared on ' + branchName",
+    '    }));',
+    "    fs.appendFileSync(progressFilePath, '\\n- Prepared ' + prdName + ' baseline on ' + branchName + '\\n', 'utf8');",
+    '  } else {',
+    "    const foundationPath = path.join(featuresDir, 'foundation.txt');",
+    "    if (!fs.existsSync(foundationPath)) {",
+    "      console.error('Missing dependency baseline in the dependent worktree.');",
+    '      process.exit(1);',
+    '    }',
+    '',
+    "    const foundationContent = fs.readFileSync(foundationPath, 'utf8').trim();",
+    "    fs.writeFileSync(path.join(featuresDir, 'follow-up.txt'), 'follow-up built on ' + branchName + '\\nfoundation=' + foundationContent + '\\n', 'utf8');",
+    '    backlog.activeItemId = null;',
+    '    backlog.activeStepId = null;',
+    '    backlog.items = (backlog.items ?? []).map(item => ({',
+    '      ...item,',
+    "      status: item.status === 'disabled' ? 'disabled' : 'done',",
+    '      steps: (item.steps ?? []).map(step => ({',
+    '        ...step,',
+    "        status: step.status === 'disabled' ? 'disabled' : 'done'",
+    '      }))',
+    '    }));',
+    '    prd.userStories = (prd.userStories ?? []).map((story, index) => ({',
+    '      ...story,',
+    "      id: story.id ?? ('US-' + String(index + 1).padStart(3, '0')),",
+    '      passes: true,',
+    "      notes: 'Completed on ' + branchName",
+    '    }));',
+    "    fs.appendFileSync(progressFilePath, '\\n- Completed ' + prdName + ' on ' + branchName + '\\n', 'utf8');",
+    "    console.log('<promise>COMPLETE</promise>');",
+    '  }',
+    '',
+    "  fs.writeFileSync(prdJsonPath, JSON.stringify(prd, null, 2) + '\\n', 'utf8');",
+    "  fs.writeFileSync(backlogPath, JSON.stringify(backlog, null, 2) + '\\n', 'utf8');",
+    "  console.log('Usage summary · input tokens 1,200 · cached input tokens 100 · output tokens 320 · total tokens 1,620 · spend $0.42');",
+    '})().catch(error => {',
+    "  console.error(error instanceof Error ? error.stack || error.message : String(error));",
+    '  process.exit(1);',
+    '}).finally(() => {',
+    "  fs.rmSync(promptPath, { force: true });",
+    '});',
+    'NODE',
+    'rm -f "$prompt_file"',
+    ''
+  ].join('\n');
+
+  return writeExecutable(binDir, 'codex', body);
+}
+
 test('scanPrdDirectory returns the newest PRDs from docs/prds first', async () => {
   const fixture = await createTempProject('ralphi-runtime-');
 
@@ -544,6 +643,96 @@ test('runRalphi lets dependent PRDs consume their full budget in round-robin mod
     assert.equal(followUpContext?.iterationsRun, 2);
     assert.equal(foundationContext?.done, true);
     assert.equal(followUpContext?.done, true);
+  } finally {
+    process.env.PATH = previousPath;
+    await fixture.cleanup();
+  }
+});
+
+test('runRalphi lets dependent PRDs continue after an upstream PRD exhausts its configured budget', async () => {
+  const fixture = await createTempProject('ralphi-runtime-');
+  const previousPath = process.env.PATH;
+
+  try {
+    const foundationPrd = path.join(fixture.rootDir, 'docs', 'prds', 'foundation.json');
+    const followUpPrd = path.join(fixture.rootDir, 'docs', 'prds', 'follow-up.json');
+    const binDir = path.join(fixture.rootDir, 'bin');
+
+    await writeFile(path.join(fixture.rootDir, 'README.md'), '# Fixture repository\n', 'utf8');
+    await writeJsonFile(foundationPrd, {
+      branchName: 'feature/foundation',
+      userStories: [
+        {
+          id: 'US-001',
+          title: 'Build the foundation',
+          description: 'Prepare a reusable baseline for downstream work.',
+          acceptanceCriteria: ['Create foundation.txt'],
+          passes: false
+        }
+      ]
+    });
+    await writeJsonFile(followUpPrd, {
+      branchName: 'feature/follow-up',
+      userStories: [
+        {
+          id: 'US-002',
+          title: 'Extend the foundation',
+          description: 'Build the dependent artifact from the committed foundation baseline.',
+          acceptanceCriteria: ['Create follow-up.txt from the foundation baseline'],
+          passes: false
+        }
+      ]
+    });
+    await writeBudgetExhaustedDependencyCodex(binDir);
+
+    await runGitOk(fixture.rootDir, ['init', '-b', 'main']);
+    await runGitOk(fixture.rootDir, ['config', 'user.name', 'Ralphi Test']);
+    await runGitOk(fixture.rootDir, ['config', 'user.email', 'ralphi@example.com']);
+    await runGitOk(fixture.rootDir, ['add', '.']);
+    await runGitOk(fixture.rootDir, ['commit', '-m', 'chore: seed fixture']);
+
+    process.env.PATH = previousPath ? `${binDir}${path.delimiter}${previousPath}` : binDir;
+
+    const config = makeConfig(fixture.rootDir, {
+      tool: 'codex',
+      plans: [
+        makePlan(foundationPrd, {
+          id: 'foundation',
+          title: 'foundation',
+          branchName: 'feature/foundation',
+          iterations: 1
+        }),
+        makePlan(followUpPrd, {
+          id: 'follow-up',
+          title: 'follow-up',
+          branchName: 'feature/follow-up',
+          iterations: 1,
+          dependsOn: 'foundation'
+        })
+      ],
+      maxIterations: 1,
+      schedule: 'round-robin',
+      workspaceStrategy: 'worktree'
+    });
+
+    const summary = await runRalphi(config);
+    const foundationContext = summary.contexts.find(context => context.planId === 'foundation');
+    const followUpContext = summary.contexts.find(context => context.planId === 'follow-up');
+
+    assert.equal(summary.completed, false);
+    assert.equal(foundationContext?.done, false);
+    assert.equal(foundationContext?.iterationsRun, 1);
+    assert.equal(foundationContext?.worktreeRemoved, true);
+    assert.ok(foundationContext?.commitSha);
+    assert.equal(followUpContext?.done, true);
+    assert.equal(followUpContext?.iterationsRun, 1);
+    assert.equal(followUpContext?.baseRef, foundationContext?.branchName ?? null);
+    assert.equal(await gitBranchExists(fixture.rootDir, foundationContext?.branchName ?? ''), true);
+    assert.equal(await gitBranchExists(fixture.rootDir, followUpContext?.branchName ?? ''), true);
+
+    const followUpContent = await runGitOk(fixture.rootDir, ['show', `${followUpContext?.branchName}:features/follow-up.txt`]);
+    assert.match(followUpContent, /follow-up built on feature\/follow-up-/);
+    assert.match(followUpContent, /foundation=foundation baseline on feature\/foundation-/);
   } finally {
     process.env.PATH = previousPath;
     await fixture.cleanup();

@@ -242,9 +242,9 @@ test('dashboardReducer uses a pending-work summary label when the run stops befo
     });
 
     assert.equal(next.phase, 'done');
-    assert.equal(next.activeStep, 'Paused after 1/1 iteration');
+    assert.equal(next.activeStep, 'All configured passes used');
     assert.equal(next.notifications[0]?.title, 'Execution paused');
-    assert.match(next.notifications[0]?.body ?? '', /Reason: stopped after 1\/1 iteration with work still pending\./);
+    assert.match(next.notifications[0]?.body ?? '', /Reason: All configured passes used; work still pending\./);
   } finally {
     await fixture.cleanup();
   }
@@ -269,9 +269,53 @@ test('pause reason helpers explain iteration limits for unfinished contexts', as
       contexts: [context]
     });
 
-    assert.equal(buildContextPauseReason(context), 'stopped after 1/1 iteration with work still pending');
-    assert.equal(buildSummaryPauseReason(summary), 'stopped after 1/1 iteration with work still pending');
-    assert.match(buildRunSummaryText(summary), /Reason: stopped after 1\/1 iteration with work still pending\./);
+    assert.equal(buildContextPauseReason(context), 'All configured passes used; work still pending');
+    assert.equal(buildSummaryPauseReason(summary), 'All configured passes used; work still pending');
+    assert.match(buildRunSummaryText(summary), /Reason: All configured passes used; work still pending\./);
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+test('buildSummaryPauseReason summarizes exhausted pass budgets across multiple PRDs', async () => {
+  const fixture = await createTempProject('ralphi-dashboard-');
+
+  try {
+    const foundationPrd = path.join(fixture.rootDir, 'docs', 'prds', 'foundation.md');
+    const followUpPrd = path.join(fixture.rootDir, 'docs', 'prds', 'follow-up.md');
+    const config = makeConfig(fixture.rootDir, {
+      plans: [
+        makePlan(foundationPrd, { id: 'foundation', title: 'foundation' }),
+        makePlan(followUpPrd, { id: 'follow-up', title: 'follow-up' })
+      ]
+    });
+    const completed = makeContextSnapshot(config, {
+      index: 0,
+      planId: 'foundation',
+      sourcePrd: foundationPrd,
+      title: 'foundation',
+      done: true,
+      status: 'complete',
+      iterationsRun: 1,
+      iterationsTarget: 1
+    });
+    const pending = makeContextSnapshot(config, {
+      index: 1,
+      planId: 'follow-up',
+      sourcePrd: followUpPrd,
+      title: 'follow-up',
+      done: false,
+      status: 'queued',
+      iterationsRun: 3,
+      iterationsTarget: 3
+    });
+    const summary = makeRunSummary([completed, pending], {
+      completed: false,
+      usageTotals: null,
+      contexts: [completed, pending]
+    });
+
+    assert.equal(buildSummaryPauseReason(summary), '1 PRD used all configured passes');
   } finally {
     await fixture.cleanup();
   }

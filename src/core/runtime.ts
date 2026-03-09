@@ -238,6 +238,12 @@ function executionComplete(snapshot: Pick<RalphContextSnapshot, 'done' | 'iterat
   return snapshot.done && iterationBudgetConsumed(snapshot);
 }
 
+function dependencyBaselineReady(
+  snapshot: Pick<RalphContextSnapshot, 'iterationsRun' | 'iterationsTarget' | 'lastError' | 'lastFailure'>
+): boolean {
+  return iterationBudgetConsumed(snapshot) && !Boolean(snapshot.lastError || snapshot.lastFailure);
+}
+
 function dependencyReady(config: RalphConfig, context: InternalContext, contexts: InternalContext[]): boolean {
   if (context.snapshot.iterationsRun > 0) {
     return true;
@@ -248,7 +254,7 @@ function dependencyReady(config: RalphConfig, context: InternalContext, contexts
     return true;
   }
 
-  if (!executionComplete(dependency.snapshot)) {
+  if (!dependencyBaselineReady(dependency.snapshot)) {
     return false;
   }
 
@@ -360,7 +366,12 @@ async function ensureContextExecutionReady(
 }
 
 async function finalizeContextArtifacts(config: RalphConfig, context: InternalContext, reporter?: RalphReporter): Promise<void> {
-  if (config.workspaceStrategy === 'shared' || !executionComplete(context.snapshot) || !context.snapshot.worktreePath || context.snapshot.worktreeRemoved) {
+  if (
+    config.workspaceStrategy === 'shared' ||
+    !dependencyBaselineReady(context.snapshot) ||
+    !context.snapshot.worktreePath ||
+    context.snapshot.worktreeRemoved
+  ) {
     return;
   }
 
@@ -2209,7 +2220,7 @@ async function runParallel(
         if (!dependencyReady(config, context, contexts)) {
           await markContextWaitingForDependency(context, contexts, reporter);
           const dependency = findContextByPlanId(contexts, context.snapshot.dependsOnPlanId);
-          if (dependency && iterationBudgetConsumed(dependency.snapshot) && !executionComplete(dependency.snapshot)) {
+          if (dependency && iterationBudgetConsumed(dependency.snapshot) && Boolean(dependency.snapshot.lastError || dependency.snapshot.lastFailure)) {
             break;
           }
           await delay(250);

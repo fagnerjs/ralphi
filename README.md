@@ -227,7 +227,9 @@ This is what makes multi-PRD runs easier to trust:
 
 Dependencies are available when you launch more than one PRD from the dashboard.
 
-Use them when one PRD should wait for another PRD to finish first.
+Use them when one PRD should wait until another PRD has finished its configured passes and released its latest committed baseline first.
+
+If an upstream PRD exhausts its pass budget without a blocking error, downstream PRDs can still continue from that committed baseline while the upstream lane remains pending in the final summary.
 
 What dependencies do for you:
 
