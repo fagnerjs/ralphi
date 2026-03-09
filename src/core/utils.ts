@@ -429,8 +429,22 @@ export function pickScheduleLabel(schedule: ScheduleMode): string {
   return 'Round robin';
 }
 
+export function extractPrintableInput(input: string, options: { allowNewlines?: boolean } = {}): string {
+  const normalized = input.replace(/\u001b\[200~/g, '').replace(/\u001b\[201~/g, '').replace(/\r\n?/g, '\n');
+
+  if (options.allowNewlines) {
+    return normalized.replace(/[\u0000-\u0008\u000b-\u001f\u007f]/g, '');
+  }
+
+  return normalized.replace(/[\u0000-\u001f\u007f]/g, '');
+}
+
+export function extractDigitInput(input: string): string {
+  return extractPrintableInput(input).replace(/\D/g, '');
+}
+
 export function isPrintableInput(input: string): boolean {
-  return input.length === 1 && !/[\u0000-\u001f\u007f]/.test(input);
+  return extractPrintableInput(input).length > 0;
 }
 
 export function parseRepoPathInput(rawValue: string): { repo: string; path: string; ref?: string } {

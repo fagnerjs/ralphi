@@ -32,7 +32,7 @@ import {
   hasUsageTotals,
   resolveTokenBudgetStatus
 } from '../core/usage.js';
-import { displayPath, pickScheduleLabel, truncateEnd, truncateMiddle } from '../core/utils.js';
+import { displayPath, extractDigitInput, pickScheduleLabel, truncateEnd, truncateMiddle } from '../core/utils.js';
 import { ArcadeCabinet } from './arcade.js';
 import { AsciiLogo, HintLine, LabelValue, SectionPanel, SystemTabs, WindowFrame } from './components.js';
 import { useTerminalViewport } from './terminal.js';
@@ -1428,8 +1428,9 @@ function DashboardApp({ config, onExit }: { config: RalphConfig; onExit: (result
           return;
         }
 
-        if (/^[0-9]$/.test(input)) {
-          setTokenBudgetInput(current => `${current}${input}`.replace(/^0+/, '').slice(0, 9) || input);
+        const digitInput = extractDigitInput(input);
+        if (digitInput) {
+          setTokenBudgetInput(current => `${current}${digitInput}`.replace(/^0+/, '').slice(0, 9) || digitInput);
           setActionError(null);
         }
         return;

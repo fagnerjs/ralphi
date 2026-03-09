@@ -85,7 +85,8 @@ import {
   displayPath,
   displayPathFromHome,
   ensureDir,
-  isPrintableInput,
+  extractDigitInput,
+  extractPrintableInput,
   parseRepoPathInput,
   pathExists,
   pickScheduleLabel,
@@ -3224,8 +3225,9 @@ function WizardApp({
         return;
       }
 
-      if (isPrintableInput(input)) {
-        setNotificationUrlInput(current => `${current}${input}`);
+      const nextInput = extractPrintableInput(input);
+      if (nextInput) {
+        setNotificationUrlInput(current => `${current}${nextInput}`);
       }
       return;
     }
@@ -3241,8 +3243,9 @@ function WizardApp({
         return;
       }
 
-      if (isPrintableInput(input)) {
-        setCleanupInput(current => `${current}${input.toUpperCase()}`);
+      const nextInput = extractPrintableInput(input);
+      if (nextInput) {
+        setCleanupInput(current => `${current}${nextInput.toUpperCase()}`);
       }
       return;
     }
@@ -3333,16 +3336,17 @@ function WizardApp({
         return;
       }
 
-      if (isPrintableInput(input) || (input === '\n' && draftForm.field === 'description')) {
+      const nextInput = extractPrintableInput(input, { allowNewlines: draftForm.field === 'description' });
+      if (nextInput) {
         setDraftForm(current =>
           current.field === 'title'
             ? {
                 ...current,
-                title: `${current.title}${input === '\n' ? '' : input}`
+                title: `${current.title}${nextInput}`
               }
             : {
                 ...current,
-                description: `${current.description}${input}`
+                description: `${current.description}${nextInput}`
               }
         );
       }
@@ -3379,8 +3383,9 @@ function WizardApp({
         return;
       }
 
-      if (isPrintableInput(input) || input === '\n') {
-        setIdeaInput(current => `${current}${input === '\n' ? '' : input}`);
+      const nextInput = extractPrintableInput(input, { allowNewlines: true });
+      if (nextInput) {
+        setIdeaInput(current => `${current}${nextInput}`);
       }
       return;
     }
@@ -3713,17 +3718,18 @@ function WizardApp({
         return;
       }
 
-      if (isPrintableInput(input) || (input === '\n' && prdEditor.field === 'description')) {
+      const nextInput = extractPrintableInput(input, { allowNewlines: prdEditor.field === 'description' });
+      if (nextInput) {
         setPrdEditor(current =>
           current
             ? current.field === 'title'
               ? {
                   ...current,
-                  title: `${current.title}${input === '\n' ? '' : input}`
+                  title: `${current.title}${nextInput}`
                 }
               : {
                   ...current,
-                  description: `${current.description}${input}`
+                  description: `${current.description}${nextInput}`
                 }
             : current
         );
@@ -3819,17 +3825,18 @@ function WizardApp({
         return;
       }
 
-      if (isPrintableInput(input) || (input === '\n' && backlogEditor.field === 'description')) {
+      const nextInput = extractPrintableInput(input, { allowNewlines: backlogEditor.field === 'description' });
+      if (nextInput) {
         setBacklogEditor(current =>
           current
             ? current.field === 'title'
               ? {
                   ...current,
-                  title: `${current.title}${input === '\n' ? '' : input}`
+                  title: `${current.title}${nextInput}`
                 }
               : {
                   ...current,
-                  description: `${current.description}${input}`
+                  description: `${current.description}${nextInput}`
                 }
             : current
         );
@@ -3948,17 +3955,6 @@ function WizardApp({
           ...current,
           [activeEntry.key]: (current[activeEntry.key] ?? '').slice(0, -1)
         }));
-      } else if (isPrintableInput(input) && /^[0-9]$/.test(input)) {
-        if (activeEntry.kind === 'variant-count') {
-          const nextValue = Number(`${singlePrdVariantCount}${input}`.slice(-2));
-          setSinglePrdVariantCount(Math.max(2, Math.min(12, nextValue || 2)));
-          return;
-        }
-
-        setIterationValues(current => ({
-          ...current,
-          [activeEntry.key]: `${current[activeEntry.key] ?? ''}${input}`.replace(/^0+/, '').slice(0, 3) || input
-        }));
       } else if (key.return) {
         const planValues = iterationEntries
           .filter(entry => entry.kind === 'plan')
@@ -3974,6 +3970,22 @@ function WizardApp({
         }
 
         setScreen('token-budget');
+      } else {
+        const digitInput = extractDigitInput(input);
+        if (!digitInput) {
+          return;
+        }
+
+        if (activeEntry.kind === 'variant-count') {
+          const nextValue = Number(`${singlePrdVariantCount}${digitInput}`.slice(-2));
+          setSinglePrdVariantCount(Math.max(2, Math.min(12, nextValue || 2)));
+          return;
+        }
+
+        setIterationValues(current => ({
+          ...current,
+          [activeEntry.key]: `${current[activeEntry.key] ?? ''}${digitInput}`.replace(/^0+/, '').slice(0, 3) || digitInput
+        }));
       }
       return;
     }
@@ -3989,8 +4001,9 @@ function WizardApp({
         return;
       }
 
-      if (tokenBudgetEnabled && isPrintableInput(input) && /^[0-9]$/.test(input)) {
-        setTokenBudgetInput(current => `${current}${input}`.replace(/^0+/, '').slice(0, 9) || input);
+      const digitInput = tokenBudgetEnabled ? extractDigitInput(input) : '';
+      if (digitInput) {
+        setTokenBudgetInput(current => `${current}${digitInput}`.replace(/^0+/, '').slice(0, 9) || digitInput);
         return;
       }
 
@@ -4101,8 +4114,9 @@ function WizardApp({
         return;
       }
 
-      if (isPrintableInput(input)) {
-        setSkillInput(current => `${current}${input}`);
+      const nextInput = extractPrintableInput(input);
+      if (nextInput) {
+        setSkillInput(current => `${current}${nextInput}`);
       }
       return;
     }
