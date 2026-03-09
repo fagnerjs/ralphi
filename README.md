@@ -367,7 +367,7 @@ From the dashboard, you can:
 - preview a skill before installing it
 - install a custom skill from a GitHub repository path or tree URL
 - choose whether the skill should live in the current repository or in your global provider directory
-- review built-in, project, and global skills from one place
+- project and global skills from one place
 
 ### Official catalogs available in the dashboard
 
