@@ -10,6 +10,7 @@ import { createGitPullRequest } from '../core/git.js';
 import { runRalphi } from '../core/runtime.js';
 import { prepareContextRetry } from '../core/session.js';
 import type {
+  BacklogItem,
   BacklogStatus,
   BacklogStep,
   DoctorReport,
@@ -550,6 +551,57 @@ function buildRunCompletionStatus(summary: RalphRunSummary): string {
   return 'Pending work remains';
 }
 
+export function resolveActiveBacklogItem(context: RalphContextSnapshot | null | undefined): BacklogItem | null {
+  const items = context?.backlog?.items ?? [];
+  if (items.length === 0) {
+    return null;
+  }
+
+  const activeItem = items.find(item => item.id === context?.activeBacklogItemId) ?? null;
+  if (activeItem) {
+    return activeItem;
+  }
+
+  const inProgressItem = items.find(item => item.status === 'in_progress') ?? null;
+  if (inProgressItem) {
+    return inProgressItem;
+  }
+
+  const pendingItem = items.find(item => item.status === 'pending') ?? null;
+  if (pendingItem) {
+    return pendingItem;
+  }
+
+  return [...items].reverse().find(item => item.status !== 'disabled') ?? null;
+}
+
+export function resolveChecklistStatus(
+  context: RalphContextSnapshot | null | undefined,
+  activeItem: BacklogItem | null
+): { color: 'green' | 'yellow' | 'red' | 'blue'; label: string } | null {
+  if (!context) {
+    return null;
+  }
+
+  if (isContextDone(context)) {
+    return backlogStatusBadge('done');
+  }
+
+  if (context.status === 'running') {
+    return activeItem ? backlogStatusBadge(activeItem.status) : { color: 'blue', label: 'live' };
+  }
+
+  if (context.status === 'blocked' || context.status === 'error') {
+    return { color: 'red', label: 'blocked' };
+  }
+
+  if (context.status === 'queued') {
+    return { color: 'yellow', label: 'queued' };
+  }
+
+  return activeItem ? backlogStatusBadge(activeItem.status) : null;
+}
+
 export function resolveContextUsageTotals(
   context: RalphContextSnapshot | null | undefined
 ): RalphContextSnapshot['usageTotals'] {
@@ -983,7 +1035,7 @@ function DashboardApp({ config, onExit }: { config: RalphConfig; onExit: (result
   const latestNotification = state.notifications[state.notifications.length - 1] ?? null;
   const tabs = ['OVERVIEW', ...visibleContexts.map(context => truncateEnd(context.title, 16)), 'ARCADE'];
   const selectedOutput = activeContext ? state.outputLogByContext[activeContext.index] ?? [] : [];
-  const activeItem = activeContext?.backlog?.items.find(item => item.id === activeContext.activeBacklogItemId) ?? null;
+  const activeItem = useMemo(() => resolveActiveBacklogItem(activeContext), [activeContext]);
   const resolvedSummary = useMemo(
     () => state.summary ?? buildFallbackSummary(config, state.contexts),
     [config, state.contexts, state.summary]
@@ -1077,12 +1129,7 @@ function DashboardApp({ config, onExit }: { config: RalphConfig; onExit: (result
     activeContext?.mcpServers.length
       ? activeContext.mcpServers.map(server => `${server.name}:${server.state}`).join(', ')
       : null;
-  const checklistStatus =
-    activeContext && isContextDone(activeContext)
-      ? backlogStatusBadge('done')
-      : activeItem
-        ? backlogStatusBadge(activeItem.status)
-        : null;
+  const checklistStatus = useMemo(() => resolveChecklistStatus(activeContext, activeItem), [activeContext, activeItem]);
   const hasPendingWork = Boolean(state.summary && !state.summary.completed) || state.phase === 'error';
   const tokenBudgetPaused = resolvedSummary.pauseReason?.code === 'token_limit';
   const hasCheckpointedState = state.contexts.length > 0;
@@ -1783,7 +1830,13 @@ function DashboardApp({ config, onExit }: { config: RalphConfig; onExit: (result
                         ) : null}
                       </>
                     ) : (
-                      <Text color={palette.dim}>Ralphi is waiting for the first backlog signal.</Text>
+                      <Text color={palette.dim}>
+                        {activeContext?.backlog?.items.length
+                          ? isContextDone(activeContext)
+                            ? 'Backlog complete. No active item remains.'
+                            : 'Ralphi is paused between backlog items.'
+                          : 'Ralphi is waiting for the first backlog signal.'}
+                      </Text>
                     )}
                   </SectionPanel>
                   <Box marginLeft={1} flexGrow={1} flexShrink={1}>

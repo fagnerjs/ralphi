@@ -13,6 +13,8 @@ import {
   dashboardReducer,
   formatContextIterations,
   orderContextsForQueue,
+  resolveActiveBacklogItem,
+  resolveChecklistStatus,
   resolveContextUsageTotals
 } from './dashboard.js';
 import { createTempProject, makeConfig, makeContextSnapshot, makePlan, makeRunSummary, makeUsageTotals } from '../test-support.js';
@@ -130,6 +132,126 @@ test('completedEarly preserves done PRDs after resuming a queued run', async () 
     assert.equal(completedEarly(context), true);
     assert.equal(formatContextIterations(context), '2/4 used · completed early');
     assert.equal(buildContextPauseReason(context), null);
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+test('resolveActiveBacklogItem falls back to the last completed item for done contexts without an active pointer', async () => {
+  const fixture = await createTempProject('ralphi-dashboard-');
+
+  try {
+    const config = makeConfig(fixture.rootDir);
+    const context = makeContextSnapshot(config, {
+      done: true,
+      status: 'complete',
+      activeBacklogItemId: null,
+      activeBacklogStepId: null,
+      backlog: {
+        items: [
+          {
+            id: 'BT-001',
+            storyId: 'US-001',
+            title: 'First item',
+            description: 'Done first.',
+            status: 'done',
+            notes: '',
+            steps: [
+              {
+                id: 'ST-001',
+                title: 'Step one',
+                status: 'done'
+              }
+            ],
+            updatedAt: '2026-03-07T00:00:00.000Z',
+            source: 'prd',
+            manualTitle: null,
+            manualDescription: null
+          },
+          {
+            id: 'BT-002',
+            storyId: 'US-002',
+            title: 'Last completed item',
+            description: 'Done second.',
+            status: 'done',
+            notes: '',
+            steps: [
+              {
+                id: 'ST-002',
+                title: 'Step two',
+                status: 'done'
+              }
+            ],
+            updatedAt: '2026-03-07T00:00:00.000Z',
+            source: 'prd',
+            manualTitle: null,
+            manualDescription: null
+          }
+        ],
+        totalItems: 2,
+        completedItems: 2,
+        totalSteps: 2,
+        completedSteps: 2,
+        activeItemId: null,
+        activeStepId: null
+      }
+    });
+
+    assert.equal(resolveActiveBacklogItem(context)?.id, 'BT-002');
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+test('resolveChecklistStatus keeps exhausted queued contexts out of the live state', async () => {
+  const fixture = await createTempProject('ralphi-dashboard-');
+
+  try {
+    const config = makeConfig(fixture.rootDir);
+    const context = makeContextSnapshot(config, {
+      done: false,
+      status: 'queued',
+      iterationsRun: 3,
+      iterationsTarget: 3,
+      backlog: {
+        items: [
+          {
+            id: 'BT-001',
+            storyId: 'US-001',
+            title: 'Pending item',
+            description: 'Still missing one step.',
+            status: 'in_progress',
+            notes: '',
+            steps: [
+              {
+                id: 'ST-001',
+                title: 'Last step',
+                status: 'in_progress'
+              }
+            ],
+            updatedAt: '2026-03-07T00:00:00.000Z',
+            source: 'prd',
+            manualTitle: null,
+            manualDescription: null
+          }
+        ],
+        totalItems: 1,
+        completedItems: 0,
+        totalSteps: 1,
+        completedSteps: 0,
+        activeItemId: 'BT-001',
+        activeStepId: 'ST-001'
+      },
+      activeBacklogItemId: 'BT-001',
+      activeBacklogStepId: 'ST-001'
+    });
+
+    const activeItem = resolveActiveBacklogItem(context);
+    assert.equal(activeItem?.status, 'in_progress');
+    assert.deepEqual(resolveChecklistStatus(context, activeItem), {
+      color: 'yellow',
+      label: 'queued'
+    });
   } finally {
     await fixture.cleanup();
   }
