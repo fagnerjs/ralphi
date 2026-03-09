@@ -313,15 +313,19 @@ export function screenBlocksCharacterShortcuts(screen: string): boolean {
   );
 }
 
+export function isSoftLineBreakInput(input: string, key: { return?: boolean; shift?: boolean }): boolean {
+  return key.return === true && key.shift === true || input === '\n' || input === '\u001b[13;2u' || input === '\u001b[27;2;13~';
+}
+
 const providerOptions: Array<{ value: ProviderName; description: string }> = [
-  { value: 'amp', description: 'Legacy Ralph-compatible autonomous loop.' },
   { value: 'claude', description: 'Claude Code autonomous sessions with native .claude skills.' },
   { value: 'codex', description: 'Codex exec with fresh context per PRD pass and .codex skills.' },
-  { value: 'copilot', description: 'GitHub Copilot CLI with .github instructions, agents, and .github/skills.' },
   { value: 'cursor', description: 'Cursor Agent CLI sessions guided by AGENTS.md plus .cursor/rules.' },
   { value: 'gemini', description: 'Gemini CLI sessions driven by GEMINI.md and .gemini commands.' },
   { value: 'opencode', description: 'OpenCode runs with AGENTS.md plus .opencode agents, commands, and skills.' },
-  { value: 'qwen', description: 'Qwen Code sessions with .qwen settings, commands, and skills.' }
+  { value: 'amp', description: 'Legacy Ralph-compatible autonomous loop.' },
+  { value: 'qwen', description: 'Qwen Code sessions with .qwen settings, commands, and skills.' },
+  { value: 'copilot', description: 'GitHub Copilot CLI with .github instructions, agents, and .github/skills.' }
 ];
 
 const scheduleOptions: Array<{ value: ScheduleMode; description: string }> = [
@@ -1129,10 +1133,19 @@ function textareaLines(value: string): string[] {
 function textareaWindow(value: string, visibleRows: number): { start: number; values: string[] } {
   const lines = textareaLines(value);
   const start = Math.max(0, lines.length - visibleRows);
+  const visibleLines = lines.slice(start, start + visibleRows);
   return {
     start,
-    values: lines.slice(start, start + visibleRows)
+    values: visibleLines.length < visibleRows ? [...visibleLines, ...Array.from({ length: visibleRows - visibleLines.length }, () => '')] : visibleLines
   };
+}
+
+function responsiveTextareaRows(totalRows: number, reservedRows: number, preferredRows = 6, minimumRows = 3): number {
+  return Math.max(minimumRows, Math.min(preferredRows, totalRows - reservedRows));
+}
+
+function expandedTextareaRows(totalRows: number, reservedRows: number, minimumRows = 3): number {
+  return Math.max(minimumRows, totalRows - reservedRows);
 }
 
 function buildPrdViewerLines(title: string, content: string): string[] {
@@ -1299,13 +1312,16 @@ function WizardApp({
 
   const { columns, rows } = useTerminalViewport();
   const compact = rows < 34;
+  const shouldUseCompactChoiceMenu = (totalItems: number, reservedRows = 10) => compact || totalItems * 3 + reservedRows > rows;
+  const standardDescriptionRows = responsiveTextareaRows(rows, 22);
+  const fullscreenDescriptionRows = expandedTextareaRows(rows, 20);
   const sidebarWidth = Math.max(24, Math.min(34, Math.floor(columns * 0.34)));
   const sidebarLabelWidth = 11;
   const sidebarValueWidth = Math.max(8, sidebarWidth - 16);
   const prdRows = Math.max(4, rows - (compact ? 18 : 22));
   const backlogRows = Math.max(4, rows - (compact ? 18 : 22));
   const ideaTranscriptRows = Math.max(8, rows - (compact ? 26 : 30));
-  const ideaComposerVisibleRows = compact ? 3 : 4;
+  const ideaComposerVisibleRows = responsiveTextareaRows(rows, 26);
   const dependencyRowsVisible = Math.max(4, rows - (compact ? 18 : 22));
   const providerSkillRowsVisible = Math.max(4, rows - (compact ? 18 : 22));
   const notificationRowsVisible = Math.max(6, rows - (compact ? 20 : 24));
@@ -3298,7 +3314,15 @@ function WizardApp({
         return;
       }
 
-      if (key.return && !key.shift) {
+      if (draftForm.field === 'description' && isSoftLineBreakInput(input, key)) {
+        setDraftForm(current => ({
+          ...current,
+          description: `${current.description}\n`
+        }));
+        return;
+      }
+
+      if (key.return) {
         if (draftForm.title.trim().length < 3) {
           setNotice('Add a title before continuing.');
           return;
@@ -3310,14 +3334,6 @@ function WizardApp({
         }
 
         openSkillPicker('prd', 'create');
-        return;
-      }
-
-      if (key.return && key.shift && draftForm.field === 'description') {
-        setDraftForm(current => ({
-          ...current,
-          description: `${current.description}\n`
-        }));
         return;
       }
 
@@ -3368,13 +3384,13 @@ function WizardApp({
         return;
       }
 
-      if (key.return && !key.shift) {
-        void sendIdeaMessage();
+      if (isSoftLineBreakInput(input, key)) {
+        setIdeaInput(current => `${current}\n`);
         return;
       }
 
-      if (key.return && key.shift) {
-        setIdeaInput(current => `${current}\n`);
+      if (key.return) {
+        void sendIdeaMessage();
         return;
       }
 
@@ -3684,12 +3700,7 @@ function WizardApp({
         return;
       }
 
-      if (key.return && !key.shift) {
-        void savePrdEdit(prdEditor);
-        return;
-      }
-
-      if (key.return && key.shift && prdEditor.field === 'description') {
+      if (prdEditor.field === 'description' && isSoftLineBreakInput(input, key)) {
         setPrdEditor(current =>
           current
             ? {
@@ -3698,6 +3709,11 @@ function WizardApp({
               }
             : current
         );
+        return;
+      }
+
+      if (key.return) {
+        void savePrdEdit(prdEditor);
         return;
       }
 
@@ -3767,7 +3783,19 @@ function WizardApp({
         return;
       }
 
-      if (key.return && !key.shift) {
+      if (backlogEditor.field === 'description' && isSoftLineBreakInput(input, key)) {
+        setBacklogEditor(current =>
+          current
+            ? {
+                ...current,
+                description: `${current.description}\n`
+              }
+            : current
+        );
+        return;
+      }
+
+      if (key.return) {
         const backlog = backlogByPrd[backlogEditor.prdPath];
         if (!backlog) {
           setNotice('Backlog not loaded yet.');
@@ -3793,18 +3821,6 @@ function WizardApp({
         void updateBacklog(backlogEditor.prdPath, nextBacklog).catch(error => {
           setNotice(error instanceof Error ? error.message : 'Unable to save the backlog item.');
         });
-        return;
-      }
-
-      if (key.return && key.shift && backlogEditor.field === 'description') {
-        setBacklogEditor(current =>
-          current
-            ? {
-                ...current,
-                description: `${current.description}\n`
-              }
-            : current
-        );
         return;
       }
 
@@ -4341,7 +4357,6 @@ function WizardApp({
   })();
 
   const installedSkillRows = compact ? 3 : 5;
-  const builtinSkillRows = installedSkills.builtin.slice(0, installedSkillRows);
   const projectSkillRows = installedSkills.project.slice(0, installedSkillRows);
   const globalSkillRows = installedSkills.global.slice(0, installedSkillRows);
   const showBusyPanel = Boolean(busyMessage) && screen !== 'skill-progress';
@@ -4433,7 +4448,13 @@ function WizardApp({
                 </Box>
                 <Box marginTop={1} flexDirection="column">
                   {pendingRunOptions.map((option, index) => (
-                    <ChoiceRow compact key={option.value} active={index === pendingRunIndex} label={option.label} description={option.description} />
+                    <ChoiceRow
+                      compact={shouldUseCompactChoiceMenu(pendingRunOptions.length, 12)}
+                      key={option.value}
+                      active={index === pendingRunIndex}
+                      label={option.label}
+                      description={option.description}
+                    />
                   ))}
                 </Box>
                 <HintLine>Use ↑ ↓ and Enter. q cancels the wizard.</HintLine>
@@ -4443,7 +4464,13 @@ function WizardApp({
             {screen === 'home' && (
               <SectionPanel title="Select a launch mode" subtitle="ENTRY" flexGrow={1}>
                 {homeOptions.map((option, index) => (
-                  <ChoiceRow compact key={option.value} active={index === homeIndex} label={option.label} description={option.description} />
+                  <ChoiceRow
+                    compact={shouldUseCompactChoiceMenu(homeOptions.length, 12)}
+                    key={option.value}
+                    active={index === homeIndex}
+                    label={option.label}
+                    description={option.description}
+                  />
                 ))}
                 <HintLine>Use ↑ ↓ and Enter. q cancels.</HintLine>
               </SectionPanel>
@@ -4456,7 +4483,8 @@ function WizardApp({
                 </Text>
                 <Box marginTop={1} flexDirection="column">
                   {notificationMenuOptions.map((option, index) => (
-                    <ChoiceRow compact
+                    <ChoiceRow
+                      compact={shouldUseCompactChoiceMenu(notificationMenuOptions.length, 16)}
                       key={option.value}
                       active={index === notificationMenuCursor}
                       label={option.label}
@@ -4711,19 +4739,16 @@ function WizardApp({
                     <Text color={palette.text}>{draftForm.title || ' '}</Text>
                   </Box>
                 </Box>
-                <Box marginTop={1} flexDirection="column" flexGrow={1}>
+                <Box marginTop={1} flexDirection="column" flexGrow={draftForm.fullscreen ? 1 : 0}>
                   <Text color={draftForm.field === 'description' ? palette.accent : palette.dim}>Description</Text>
                   <Box
                     borderStyle="round"
                     borderColor={draftForm.field === 'description' ? palette.border : palette.borderSoft}
                     paddingX={1}
                     flexDirection="column"
-                    flexGrow={1}
+                    flexGrow={draftForm.fullscreen ? 1 : 0}
                   >
-                    {textareaWindow(
-                      draftForm.description || ' ',
-                      draftForm.fullscreen ? Math.max(10, rows - 24) : Math.max(5, Math.min(8, rows - 24))
-                    ).values.map((line, index) => (
+                    {textareaWindow(draftForm.description || ' ', draftForm.fullscreen ? fullscreenDescriptionRows : standardDescriptionRows).values.map((line, index) => (
                       <Text key={`draft-description-${index}`} color={palette.text}>
                         {line || ' '}
                       </Text>
@@ -4740,10 +4765,7 @@ function WizardApp({
 
             {screen === 'idea-chat' && (
               <SectionPanel title="Idea chat" subtitle={ideaLoading ? 'SCOPING · THINKING' : 'SCOPING'} flexGrow={1}>
-                <Text color={palette.dim}>
-                  Keep the conversation focused on one feature initiative. When Ralphi has enough scope, it will create PRDs and move on automatically.
-                </Text>
-                <Box marginTop={1} flexDirection="column" flexGrow={1}>
+                <Box flexDirection="column" flexGrow={1}>
                   <HintLine>{ideaTranscriptWindow.start > 0 ? `↑ ${ideaTranscriptWindow.start} more above` : ' '}</HintLine>
                   {ideaTranscriptWindow.values.length > 0 ? (
                     ideaTranscriptWindow.values.map(line => (
@@ -4813,7 +4835,15 @@ function WizardApp({
                           ? 'No provider skill directory was found in this project or in your home folder.'
                           : `Browse ${directorySkills.length} provider skill${directorySkills.length === 1 ? '' : 's'} from project/global directories.`;
 
-                    return <ChoiceRow compact key={option.value} active={index === skillModeIndex} label={option.label} description={description} />;
+                    return (
+                      <ChoiceRow
+                        compact={shouldUseCompactChoiceMenu(skillModeOptions.length, 12)}
+                        key={option.value}
+                        active={index === skillModeIndex}
+                        label={option.label}
+                        description={description}
+                      />
+                    );
                   })}
                 </Box>
                 <HintLine>Use ↑ ↓ and Enter. Left arrow returns to the previous step.</HintLine>
@@ -4830,7 +4860,8 @@ function WizardApp({
                 {directorySkillWindow.values.map((skill, index) => {
                   const absoluteIndex = directorySkillWindow.start + index;
                   return (
-                    <ChoiceRow compact
+                    <ChoiceRow
+                      compact={shouldUseCompactChoiceMenu(directorySkills.length, 12)}
                       key={skill.id}
                       active={absoluteIndex === directorySkillCursor}
                       label={skill.name}
@@ -4876,7 +4907,13 @@ function WizardApp({
                 </Box>
                 <Box marginTop={1} flexDirection="column">
                   {briefCreatedOptions.map((option, index) => (
-                    <ChoiceRow compact key={option.value} active={index === briefCreatedIndex} label={option.label} description={option.description} />
+                    <ChoiceRow
+                      compact={shouldUseCompactChoiceMenu(briefCreatedOptions.length, 14)}
+                      key={option.value}
+                      active={index === briefCreatedIndex}
+                      label={option.label}
+                      description={option.description}
+                    />
                   ))}
                 </Box>
                 <HintLine>Enter confirms. Left arrow returns to the brief editor.</HintLine>
@@ -4956,18 +4993,18 @@ function WizardApp({
                     <Text color={palette.text}>{backlogEditor.title || ' '}</Text>
                   </Box>
                 </Box>
-                <Box marginTop={1} flexDirection="column" flexGrow={1}>
+                <Box marginTop={1} flexDirection="column" flexGrow={backlogEditor.fullscreen ? 1 : 0}>
                   <Text color={backlogEditor.field === 'description' ? palette.accent : palette.dim}>Description</Text>
                   <Box
                     borderStyle="round"
                     borderColor={backlogEditor.field === 'description' ? palette.border : palette.borderSoft}
                     paddingX={1}
                     flexDirection="column"
-                    flexGrow={1}
+                    flexGrow={backlogEditor.fullscreen ? 1 : 0}
                   >
                     {textareaWindow(
                       backlogEditor.description || ' ',
-                      backlogEditor.fullscreen ? Math.max(10, rows - 24) : Math.max(5, Math.min(8, rows - 24))
+                      backlogEditor.fullscreen ? fullscreenDescriptionRows : standardDescriptionRows
                     ).values.map((line, index) => (
                       <Text key={`backlog-editor-line-${index}`} color={palette.text}>
                         {line || ' '}
@@ -5031,19 +5068,16 @@ function WizardApp({
                     <Text color={palette.text}>{prdEditor.title || ' '}</Text>
                   </Box>
                 </Box>
-                <Box marginTop={1} flexDirection="column" flexGrow={1}>
+                <Box marginTop={1} flexDirection="column" flexGrow={prdEditor.fullscreen ? 1 : 0}>
                   <Text color={prdEditor.field === 'description' ? palette.accent : palette.dim}>Description</Text>
                   <Box
                     borderStyle="round"
                     borderColor={prdEditor.field === 'description' ? palette.border : palette.borderSoft}
                     paddingX={1}
                     flexDirection="column"
-                    flexGrow={1}
+                    flexGrow={prdEditor.fullscreen ? 1 : 0}
                   >
-                    {textareaWindow(
-                      prdEditor.description || ' ',
-                      prdEditor.fullscreen ? Math.max(10, rows - 24) : Math.max(5, Math.min(8, rows - 24))
-                    ).values.map((line, index) => (
+                    {textareaWindow(prdEditor.description || ' ', prdEditor.fullscreen ? fullscreenDescriptionRows : standardDescriptionRows).values.map((line, index) => (
                       <Text key={`prd-editor-line-${index}`} color={palette.text}>
                         {line || ' '}
                       </Text>
@@ -5063,14 +5097,12 @@ function WizardApp({
                 <Text color={palette.dim}>Choose the provider for this launch.</Text>
                 <Box marginTop={1} flexDirection="column">
                   {providerOptions.map((option, index) => (
-                    <Box key={option.value} flexShrink={1}>
-                      <Text color={index === providerIndex ? palette.accent : palette.dim}>{index === providerIndex ? '> ' : '  '}</Text>
-                      <Box flexGrow={1} flexShrink={1}>
-                        <Text color={index === providerIndex ? palette.text : palette.dim} wrap="truncate-end">
-                          {option.value}
-                        </Text>
-                      </Box>
-                    </Box>
+                    <ChoiceRow
+                      compact
+                      key={option.value}
+                      active={index === providerIndex}
+                      label={option.value}
+                    />
                   ))}
                 </Box>
                 <Box marginTop={1} flexDirection="column">
@@ -5140,7 +5172,8 @@ function WizardApp({
                 </Text>
                 <Box marginTop={1} flexDirection="column">
                   {providerSkillDecisionOptions.map((option, index) => (
-                    <ChoiceRow compact
+                    <ChoiceRow
+                      compact={shouldUseCompactChoiceMenu(providerSkillDecisionOptions.length, 14)}
                       key={option.value}
                       active={index === providerSkillActionIndex}
                       label={option.label}
@@ -5158,7 +5191,13 @@ function WizardApp({
             {screen === 'environment' && (
               <SectionPanel title="Choose runtime" subtitle="EXECUTION" flexGrow={1}>
                 {availableEnvironmentOptions.map((option, index) => (
-                  <ChoiceRow compact key={option.value} active={index === environmentIndex} label={option.label} description={option.description} />
+                  <ChoiceRow
+                    compact={shouldUseCompactChoiceMenu(availableEnvironmentOptions.length, 14)}
+                    key={option.value}
+                    active={index === environmentIndex}
+                    label={option.label}
+                    description={option.description}
+                  />
                 ))}
                 <Box marginTop={1} flexDirection="column">
                   <HintLine>
@@ -5174,7 +5213,13 @@ function WizardApp({
             {screen === 'schedule' && (
               <SectionPanel title="Choose execution strategy" subtitle="ORCHESTRATION" flexGrow={1}>
                 {scheduleOptions.map((option, index) => (
-                  <ChoiceRow compact key={option.value} active={index === scheduleIndex} label={option.value} description={option.description} />
+                  <ChoiceRow
+                    compact={shouldUseCompactChoiceMenu(scheduleOptions.length, 14)}
+                    key={option.value}
+                    active={index === scheduleIndex}
+                    label={option.value}
+                    description={option.description}
+                  />
                 ))}
                 <HintLine>
                   {selectedPrdPaths.length === 1
@@ -5331,15 +5376,14 @@ function WizardApp({
                 {screen === 'skills-menu' && (
                   <Box flexDirection="column">
                     {skillMenuOptions.map((option, index) => (
-                      <ChoiceRow compact key={option.value} active={index === skillMenuIndex} label={option.label} description={option.description} />
+                      <ChoiceRow
+                        compact={shouldUseCompactChoiceMenu(skillMenuOptions.length, 18)}
+                        key={option.value}
+                        active={index === skillMenuIndex}
+                        label={option.label}
+                        description={option.description}
+                      />
                     ))}
-                    <Box marginTop={1} flexDirection="column">
-                      <Text color={palette.accent}>Built-in skills</Text>
-                      {builtinSkillRows.length === 0 ? <Text color={palette.dim}>No built-in skills detected.</Text> : null}
-                      {builtinSkillRows.map(skill => (
-                        <Text key={`builtin-${skill.name}`} color={palette.text}>{`• ${skill.name} · ${truncateEnd(skill.description, 52)}`}</Text>
-                      ))}
-                    </Box>
                     <Box marginTop={1} flexDirection="column">
                       <Text color={palette.accent}>Project skills</Text>
                       {projectSkillRows.length === 0 ? <Text color={palette.dim}>No project skills installed yet.</Text> : null}
@@ -5435,7 +5479,13 @@ function WizardApp({
                     </Text>
                     <Box marginTop={1} flexDirection="column">
                       {skillTargetOptions.map((option, index) => (
-                        <ChoiceRow compact key={option.value} active={index === skillTargetIndex} label={option.label} description={option.description} />
+                        <ChoiceRow
+                          compact={shouldUseCompactChoiceMenu(skillTargetOptions.length, 14)}
+                          key={option.value}
+                          active={index === skillTargetIndex}
+                          label={option.label}
+                          description={option.description}
+                        />
                       ))}
                     </Box>
                     <Box marginTop={1} flexDirection="column">
@@ -5452,7 +5502,8 @@ function WizardApp({
                     </Text>
                     <Box marginTop={1} flexDirection="column">
                       {scopeOptions.map((option, index) => (
-                        <ChoiceRow compact
+                        <ChoiceRow
+                          compact={shouldUseCompactChoiceMenu(scopeOptions.length, 14)}
                           key={option.value}
                           active={index === scopeIndex}
                           label={option.value}
@@ -5497,24 +5548,6 @@ function WizardApp({
               </SectionPanel>
             )}
 
-            {!compact && screen !== 'about' ? (
-              <Box marginTop={1}>
-                <SectionPanel title="Mission brief" subtitle="STACK" flexGrow={1}>
-                  <Text color={palette.text}>
-                    Ralphi keeps execution state in `./.ralphi/state`, lets you choose PRD/backlog skills from built-in or provider-standard directories, and refreshes backlog state before launch.
-                  </Text>
-                <Box marginTop={1} flexDirection="column">
-                  <HintLine>Root: {displayPath(rootDir, rootDir) || '.'}</HintLine>
-                  <HintLine>Project config: .ralphi.json</HintLine>
-                  <HintLine>Built-in skills: ./ralph/skills</HintLine>
-                  <HintLine>Project provider dirs: ./.codex/skills/public · ./.claude/skills · ./.github/skills · ./.agents/skills · ./.opencode/skills · ./.qwen/skills</HintLine>
-                  <HintLine>Global provider dirs: ~/.codex/skills/public · ~/.claude/skills · ~/.copilot/skills · ~/.config/agents/skills · ~/.config/opencode/skills · ~/.qwen/skills</HintLine>
-                  <HintLine>Gemini uses GEMINI.md and ./.gemini/commands; Cursor uses AGENTS.md plus ./.cursor/rules instead of SKILL.md directories.</HintLine>
-                  <HintLine>Defaults are copied only when the selected skill is outside the canonical provider directory.</HintLine>
-                </Box>
-              </SectionPanel>
-            </Box>
-          ) : null}
               </>
             )}
 

@@ -14,6 +14,7 @@ export const palette = {
   yellow: '#f9f871',
   text: '#f4ecff',
   dim: '#8a86a5',
+  muted: '#6f6a87',
   danger: '#ff7aa2'
 } as const;
 

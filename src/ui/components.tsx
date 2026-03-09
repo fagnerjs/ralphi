@@ -200,8 +200,8 @@ export function ChoiceRow({
         </Box>
       </Box>
       {description ? (
-        <Box marginLeft={3} flexShrink={1}>
-          <Text color={palette.dim} wrap="truncate-end">
+        <Box marginLeft={2} flexShrink={1}>
+          <Text color={palette.muted} wrap="truncate-end">
             {description}
           </Text>
         </Box>
