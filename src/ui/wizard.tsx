@@ -33,6 +33,14 @@ import {
 import { sortPlansByDependencies, validatePlanDependencies, wouldCreateDependencyCycle } from '../core/dependencies.js';
 import { doctorSummaryLine, runDoctor } from '../core/doctor.js';
 import { cleanupManagedWorktrees, type WorktreeCleanupResult } from '../core/git.js';
+import {
+  createIdeaPrdBatchDrafts,
+  resolveIdeaTurn,
+  runIdeaConversationTurn,
+  runIdeaPrdBatchPlan,
+  type IdeaConversationProgress,
+  type IdeaTranscriptEntry
+} from '../core/idea.js';
 import { loadPrdDocument, savePrdDocument } from '../core/prd.js';
 import {
   addProjectSkill,
@@ -87,10 +95,11 @@ import {
 } from '../core/utils.js';
 import { ArcadeCabinet } from './arcade.js';
 import { AsciiLogo, ChoiceRow, HintLine, LabelValue, SectionPanel, SelectRow, SystemTabs, WindowFrame } from './components.js';
+import { buildIdeaStatusLines, flattenIdeaTranscript } from './idea-chat.js';
 import { useTerminalViewport } from './terminal.js';
 import { palette, systemTheme } from './theme.js';
 
-type HomeAction = 'run-existing' | 'create-prd' | 'bootstrap' | 'notifications' | 'manage-skills' | 'cleanup' | 'about';
+type HomeAction = 'run-existing' | 'create-prd' | 'idea' | 'bootstrap' | 'notifications' | 'manage-skills' | 'cleanup' | 'about';
 type SkillCatalogSource = 'openai' | 'claude' | 'github';
 type PendingRunAction = 'continue' | 'restart' | 'discard';
 type NotificationMenuAction = 'events' | 'channels';
@@ -107,6 +116,7 @@ type Screen =
   | 'cleanup-confirm'
   | 'prds'
   | 'brief'
+  | 'idea-chat'
   | 'skill-mode'
   | 'skill-directory'
   | 'backlog-policy'
@@ -150,7 +160,7 @@ interface CreatedDraft {
   path: string;
   title: string;
   prdSkillName: string;
-  backlogSkillName: string;
+  backlogSkillName?: string | null;
 }
 
 type EditorField = 'title' | 'description';
@@ -166,7 +176,7 @@ interface DraftFormState {
 
 interface SkillPickerState {
   purpose: SkillPurpose;
-  context: 'create' | 'existing';
+  context: 'create' | 'existing' | 'idea';
 }
 
 interface BacklogPolicyRow {
@@ -293,6 +303,7 @@ interface NotificationChannelRow {
 export function screenBlocksCharacterShortcuts(screen: string): boolean {
   return (
     screen === 'brief' ||
+    screen === 'idea-chat' ||
     screen === 'prd-edit' ||
     screen === 'backlog-edit' ||
     screen === 'skill-input' ||
@@ -328,6 +339,11 @@ const baseHomeOptions: Array<{ value: HomeAction; label: string; description: st
     value: 'create-prd',
     label: 'Create new PRDs',
     description: 'Write a brief, generate a PRD backlog, and continue.'
+  },
+  {
+    value: 'idea',
+    label: 'Idea mode',
+    description: 'Scope a feature in chat, auto-create PRDs, and continue.'
   },
   {
     value: 'notifications',
@@ -1169,6 +1185,15 @@ function WizardApp({
     () => new Set(initial.plans.map(plan => plan.sourcePrd))
   );
   const [createdDrafts, setCreatedDrafts] = useState<CreatedDraft[]>([]);
+  const [ideaTranscript, setIdeaTranscript] = useState<IdeaTranscriptEntry[]>([]);
+  const [ideaInput, setIdeaInput] = useState('');
+  const [ideaTranscriptScroll, setIdeaTranscriptScroll] = useState(0);
+  const [ideaProgress, setIdeaProgress] = useState<IdeaConversationProgress>({
+    providerQuestionsAsked: 0,
+    derailInsistenceCount: 0
+  });
+  const [ideaLoading, setIdeaLoading] = useState(false);
+  const [ideaLoadingLabel, setIdeaLoadingLabel] = useState<string | null>(null);
   const [draftForm, setDraftForm] = useState<DraftFormState>(() => ({
     title: initial.createPrdPrompt?.trim() ?? '',
     description: initial.createPrdPrompt?.trim() ?? '',
@@ -1278,6 +1303,8 @@ function WizardApp({
   const sidebarValueWidth = Math.max(8, sidebarWidth - 16);
   const prdRows = Math.max(4, rows - (compact ? 18 : 22));
   const backlogRows = Math.max(4, rows - (compact ? 18 : 22));
+  const ideaTranscriptRows = Math.max(8, rows - (compact ? 26 : 30));
+  const ideaComposerVisibleRows = compact ? 3 : 4;
   const dependencyRowsVisible = Math.max(4, rows - (compact ? 18 : 22));
   const providerSkillRowsVisible = Math.max(4, rows - (compact ? 18 : 22));
   const notificationRowsVisible = Math.max(6, rows - (compact ? 20 : 24));
@@ -1321,6 +1348,7 @@ function WizardApp({
   const homeOptions = useMemo<Array<{ value: HomeAction; label: string; description: string }>>(() => {
     const runExisting = homeOptionByValue.get('run-existing')!;
     const createPrd = homeOptionByValue.get('create-prd')!;
+    const idea = homeOptionByValue.get('idea')!;
     const notifications = homeOptionByValue.get('notifications')!;
     const manageSkills = homeOptionByValue.get('manage-skills')!;
     const cleanup = homeOptionByValue.get('cleanup')!;
@@ -1329,12 +1357,13 @@ function WizardApp({
     const trailing = [notifications, manageSkills, cleanup, about];
 
     if (projectBootstrap.items.length === 0) {
-      return [runExisting, createPrd, ...trailing];
+      return [runExisting, createPrd, idea, ...trailing];
     }
 
     return [
       runExisting,
       createPrd,
+      idea,
       {
         value: 'bootstrap',
         label: hasRecommendedBootstrapItems ? 'Project bootstrap' : 'Optional bootstrap',
@@ -1349,10 +1378,25 @@ function WizardApp({
   const activeProvider = providerOptions[providerIndex] ?? providerOptions[0];
   const activeProviderHasNativeSkills = providerSupportsNativeExecutionSkills(activeProvider.value);
   const activeProviderStructureLines = providerStructureLines(activeProvider.value);
-  const entryWorkScreen: Screen = activeHome.value === 'create-prd' ? 'brief' : 'prds';
+  const entryWorkScreen: Screen =
+    activeHome.value === 'create-prd' ? 'brief' : activeHome.value === 'idea' ? 'idea-chat' : 'prds';
   const activeSchedule = scheduleOptions[scheduleIndex] ?? scheduleOptions[0];
   const activeSkillMenu = skillMenuOptions[skillMenuIndex] ?? skillMenuOptions[0];
-  const selectedPrdPaths = activeHome.value === 'create-prd' ? createdDrafts.map(draft => draft.path) : Array.from(selectedExistingPrds);
+  const selectedPrdPaths =
+    activeHome.value === 'create-prd' || activeHome.value === 'idea'
+      ? createdDrafts.map(draft => draft.path)
+      : Array.from(selectedExistingPrds);
+  const ideaTranscriptLines = useMemo(() => flattenIdeaTranscript(ideaTranscript), [ideaTranscript]);
+  const ideaStatusLines = useMemo(
+    () =>
+      buildIdeaStatusLines({
+        provider: activeProvider.value,
+        progress: ideaProgress,
+        loading: ideaLoading,
+        loadingLabel: ideaLoadingLabel
+      }),
+    [activeProvider.value, ideaLoading, ideaLoadingLabel, ideaProgress]
+  );
   const plans = useMemo(
     () => buildPlans(ralphDir, selectedPrdPaths, iterationValues, activeSchedule.value, singlePrdVariantCount, dependencyValues),
     [activeSchedule.value, dependencyValues, iterationValues, ralphDir, selectedPrdPaths, singlePrdVariantCount]
@@ -1395,7 +1439,11 @@ function WizardApp({
   const notificationChannelRows = useMemo(() => buildNotificationChannelRows(projectConfig.notifications), [projectConfig.notifications]);
   const activeNotificationChannelRow = notificationChannelRows[notificationChannelCursor] ?? notificationChannelRows[0] ?? null;
   const editorFullscreen = draftForm.fullscreen || Boolean(prdEditor?.fullscreen) || Boolean(backlogEditor?.fullscreen);
-  const showSidebar = (!compact || screen === 'home' || screen === 'bootstrap' || screen === 'about' || screen === 'notifications' || screen === 'notification-events' || screen === 'notification-channels' || screen === 'cleanup-confirm') && !editorFullscreen && !arcadeOpen;
+  const showSidebar =
+    (!compact || screen === 'home' || screen === 'bootstrap' || screen === 'about' || screen === 'notifications' || screen === 'notification-events' || screen === 'notification-channels' || screen === 'cleanup-confirm') &&
+    screen !== 'idea-chat' &&
+    !editorFullscreen &&
+    !arcadeOpen;
   const activeSessionExecutionSkills = useMemo(
     () => Object.values(sessionExecutionSkills).filter(skill => skill.provider === activeProvider.value),
     [activeProvider.value, sessionExecutionSkills]
@@ -1626,6 +1674,24 @@ function WizardApp({
       return next;
     });
   }, [selectedPrdPaths]);
+
+  useEffect(() => {
+    if (screen !== 'idea-chat' || activeHome.value !== 'idea' || ideaTranscript.length > 0) {
+      return;
+    }
+
+    setIdeaTranscript([
+      {
+        role: 'assistant',
+        kind: 'status',
+        content: 'Describe the feature you want to scope. Ralphi will keep the conversation focused and turn it into PRDs.'
+      }
+    ]);
+  }, [activeHome.value, ideaTranscript.length, screen]);
+
+  useEffect(() => {
+    setIdeaTranscriptScroll(current => Math.max(0, Math.min(current, Math.max(0, ideaTranscriptLines.length - ideaTranscriptRows))));
+  }, [ideaTranscriptLines.length, ideaTranscriptRows]);
 
   useEffect(() => {
     setBacklogCursor(current => Math.max(0, Math.min(current, Math.max(0, backlogRowsAll.length - 1))));
@@ -2277,7 +2343,19 @@ function WizardApp({
     );
   };
 
-  const openSkillPicker = (purpose: SkillPurpose, context: 'create' | 'existing'): void => {
+  const resetIdeaSession = (): void => {
+    setIdeaTranscript([]);
+    setIdeaInput('');
+    setIdeaTranscriptScroll(0);
+    setIdeaProgress({
+      providerQuestionsAsked: 0,
+      derailInsistenceCount: 0
+    });
+    setIdeaLoading(false);
+    setIdeaLoadingLabel(null);
+  };
+
+  const openSkillPicker = (purpose: SkillPurpose, context: 'create' | 'existing' | 'idea'): void => {
     setSkillPicker({ purpose, context });
     setSkillModeIndex(0);
     setDirectorySkillCursor(0);
@@ -2438,6 +2516,155 @@ function WizardApp({
     await generateBacklogsFromPolicy(await buildBacklogPolicy(prdPaths), skill);
   };
 
+  const beginIdeaBacklogFlow = async (skill: DiscoveredSkill): Promise<void> => {
+    const prdPaths = createdDrafts.map(draft => draft.path);
+    if (prdPaths.length === 0) {
+      setNotice('Idea mode has not created any PRDs yet.');
+      return;
+    }
+
+    setSelectedBacklogSkill(skill);
+    setCreatedDrafts(current => current.map(draft => ({ ...draft, backlogSkillName: skill.name })));
+    await generateBacklogsFromPolicy(await buildBacklogPolicy(prdPaths), skill);
+  };
+
+  const startIdeaPrdBatchHandoff = async (transcriptSnapshot: IdeaTranscriptEntry[]): Promise<void> => {
+    setBusyMessage('Planning Idea PRD batch...');
+    setNotice(null);
+
+    try {
+      const batchPlan = await runIdeaPrdBatchPlan({
+        rootDir,
+        provider: activeProvider.value,
+        transcript: transcriptSnapshot,
+        onProgress: progress => {
+          setBusyMessage(`Planning Idea PRD batch... · ${progress}`);
+        }
+      });
+
+      const created = await createIdeaPrdBatchDrafts({
+        rootDir,
+        plan: batchPlan,
+        provider: activeProvider.value,
+        prdSkillName: builtinPrdSkill.name,
+        prdSkillFilePath: builtinPrdSkill.filePath,
+        onProgress: progress => {
+          setBusyMessage(progress);
+        }
+      });
+
+      setCreatedDrafts(
+        created.drafts.map(draft => ({
+          path: draft.path,
+          title: draft.title,
+          prdSkillName: draft.prdSkillName,
+          backlogSkillName: null
+        }))
+      );
+      setDependencyValues(created.dependencySuggestions);
+      setNotice(`Idea mode created ${created.drafts.length} PRD${created.drafts.length === 1 ? '' : 's'}. Choose a backlog skill to continue.`);
+      openSkillPicker('backlog', 'idea');
+    } catch (error) {
+      resetIdeaSession();
+      setScreen('home');
+      setNotice(error instanceof Error ? error.message : 'Unable to create Idea mode PRDs.');
+    } finally {
+      setBusyMessage(null);
+    }
+  };
+
+  const sendIdeaMessage = async (): Promise<void> => {
+    if (ideaLoading) {
+      return;
+    }
+
+    const message = ideaInput.trim();
+    if (!message) {
+      setNotice('Write a short feature reply before sending.');
+      return;
+    }
+
+    const userEntry: IdeaTranscriptEntry = {
+      role: 'user',
+      kind: 'message',
+      content: message
+    };
+    const transcriptSnapshot = [...ideaTranscript, userEntry];
+
+    setNotice(null);
+    setIdeaTranscript(transcriptSnapshot);
+    setIdeaInput('');
+    setIdeaTranscriptScroll(Number.MAX_SAFE_INTEGER);
+    setIdeaLoading(true);
+    setIdeaLoadingLabel('Waiting for provider response');
+
+    try {
+      const response = await runIdeaConversationTurn({
+        rootDir,
+        provider: activeProvider.value,
+        transcript: transcriptSnapshot,
+        progress: ideaProgress,
+        onProgress: progress => {
+          setIdeaLoadingLabel(progress);
+        }
+      });
+      const resolution = resolveIdeaTurn(ideaProgress, response);
+
+      setIdeaProgress({
+        providerQuestionsAsked: resolution.providerQuestionsAsked,
+        derailInsistenceCount: resolution.derailInsistenceCount
+      });
+
+      if (resolution.status === 'continue') {
+        const assistantParts = [response.question, response.rationale ? `Why: ${response.rationale}` : null, response.scopeGoal ? `Scope: ${response.scopeGoal}` : null].filter(Boolean);
+        setIdeaTranscript([
+          ...transcriptSnapshot,
+          {
+            role: 'assistant',
+            kind: 'question',
+            content: assistantParts.join('\n')
+          }
+        ]);
+        setIdeaTranscriptScroll(Number.MAX_SAFE_INTEGER);
+        return;
+      }
+
+      if (resolution.status === 'ready') {
+        const readyTranscript = [
+          ...transcriptSnapshot,
+          {
+            role: 'assistant' as const,
+            kind: 'summary' as const,
+            content: resolution.response.scopeSummary ?? resolution.reason
+          },
+          {
+            role: 'assistant' as const,
+            kind: 'status' as const,
+            content: 'Enough information was gathered. PRD creation is starting.'
+          }
+        ];
+
+        setIdeaTranscript(readyTranscript);
+        setIdeaTranscriptScroll(Number.MAX_SAFE_INTEGER);
+        setTimeout(() => {
+          void startIdeaPrdBatchHandoff(readyTranscript);
+        }, 0);
+        return;
+      }
+
+      resetIdeaSession();
+      setScreen('home');
+      setNotice(resolution.reason);
+    } catch (error) {
+      resetIdeaSession();
+      setScreen('home');
+      setNotice(error instanceof Error ? error.message : 'Idea mode failed.');
+    } finally {
+      setIdeaLoading(false);
+      setIdeaLoadingLabel(null);
+    }
+  };
+
   const createDraftAndBacklog = async (backlogSkill: DiscoveredSkill): Promise<void> => {
     if (!selectedPrdSkill) {
       setNotice('Select a PRD skill before generating the draft.');
@@ -2536,6 +2763,11 @@ function WizardApp({
 
     if (skillPicker.context === 'create') {
       await createDraftAndBacklog(skill);
+      return;
+    }
+
+    if (skillPicker.context === 'idea') {
+      await beginIdeaBacklogFlow(skill);
       return;
     }
 
@@ -2785,6 +3017,13 @@ function WizardApp({
 
       if (screen === 'prds' || screen === 'brief') {
         setScreen('provider-skills');
+      } else if (screen === 'idea-chat') {
+        if (ideaLoading) {
+          setNotice('Wait for the current provider turn to finish before leaving Idea mode.');
+          return;
+        }
+
+        setScreen(activeProviderHasNativeSkills ? 'provider-skills' : 'provider');
       } else if (screen === 'about') {
         setScreen('home');
       } else if (screen === 'bootstrap') {
@@ -2794,7 +3033,15 @@ function WizardApp({
           setSkillPicker({ purpose: 'prd', context: 'create' });
         } else {
           setSkillPicker(null);
-          setScreen(skillPicker?.context === 'create' ? 'brief' : 'prds');
+          setScreen(
+            skillPicker?.context === 'create'
+              ? 'brief'
+              : skillPicker?.context === 'idea'
+                ? activeProviderHasNativeSkills
+                  ? 'provider-skills'
+                  : 'provider'
+                : 'prds'
+          );
           return;
         }
       } else if (screen === 'skill-directory') {
@@ -2804,7 +3051,13 @@ function WizardApp({
       } else if (screen === 'brief-created') {
         setScreen('brief');
       } else if (screen === 'backlog') {
-        setScreen(activeHome.value === 'create-prd' ? 'brief-created' : 'prds');
+        if (activeHome.value === 'create-prd') {
+          setScreen('brief-created');
+        } else if (activeHome.value === 'idea') {
+          openSkillPicker('backlog', 'idea');
+        } else {
+          setScreen('prds');
+        }
       } else if (screen === 'dependencies') {
         setScreen('backlog');
       } else if (screen === 'backlog-edit') {
@@ -2914,6 +3167,11 @@ function WizardApp({
         } else if (activeHome.value === 'about') {
           setScreen('about');
         } else {
+          if (activeHome.value === 'idea') {
+            resetIdeaSession();
+            setCreatedDrafts([]);
+            setDependencyValues({});
+          }
           setScreen('provider');
         }
       }
@@ -3087,6 +3345,42 @@ function WizardApp({
                 description: `${current.description}${input}`
               }
         );
+      }
+      return;
+    }
+
+    if (screen === 'idea-chat') {
+      if (key.upArrow) {
+        setIdeaTranscriptScroll(current => Math.max(0, current - 1));
+        return;
+      }
+
+      if (key.downArrow) {
+        setIdeaTranscriptScroll(current => Math.min(Math.max(ideaTranscriptLines.length - ideaTranscriptRows, 0), current + 1));
+        return;
+      }
+
+      if (ideaLoading) {
+        return;
+      }
+
+      if (key.return && !key.shift) {
+        void sendIdeaMessage();
+        return;
+      }
+
+      if (key.return && key.shift) {
+        setIdeaInput(current => `${current}\n`);
+        return;
+      }
+
+      if (key.backspace || key.delete) {
+        setIdeaInput(current => current.slice(0, -1));
+        return;
+      }
+
+      if (isPrintableInput(input) || input === '\n') {
+        setIdeaInput(current => `${current}${input === '\n' ? '' : input}`);
       }
       return;
     }
@@ -3924,6 +4218,7 @@ function WizardApp({
   const prdWindow = sliceWindow(prdOptions, prdWindowStart, prdRows);
   const bootstrapWindow = sliceWindow(projectBootstrap.items, bootstrapWindowStart, bootstrapRows);
   const backlogWindow = sliceWindow(backlogRowsAll, backlogWindowStart, backlogRows);
+  const ideaTranscriptWindow = sliceWindow(ideaTranscriptLines, ideaTranscriptScroll, ideaTranscriptRows);
   const dependencyWindow = sliceWindow(dependencyRowsAll, dependencyWindowStart, dependencyRowsVisible);
   const providerSkillWindow = sliceWindow(providerSkillRows, providerSkillWindowStart, providerSkillRowsVisible);
   const notificationChannelWindow = sliceWindow(notificationChannelRows, notificationChannelWindowStart, notificationRowsVisible);
@@ -3940,6 +4235,7 @@ function WizardApp({
   const prdItemsBelow = Math.max(0, prdOptions.length - (prdWindow.start + prdWindow.values.length));
   const bootstrapItemsBelow = Math.max(0, projectBootstrap.items.length - (bootstrapWindow.start + bootstrapWindow.values.length));
   const backlogItemsBelow = Math.max(0, backlogRowsAll.length - (backlogWindow.start + backlogWindow.values.length));
+  const ideaTranscriptLinesBelow = Math.max(0, ideaTranscriptLines.length - (ideaTranscriptWindow.start + ideaTranscriptWindow.values.length));
   const dependencyItemsBelow = Math.max(0, dependencyRowsAll.length - (dependencyWindow.start + dependencyWindow.values.length));
   const providerSkillItemsBelow = Math.max(0, providerSkillRows.length - (providerSkillWindow.start + providerSkillWindow.values.length));
   const notificationChannelRowsBelow = Math.max(0, notificationChannelRows.length - (notificationChannelWindow.start + notificationChannelWindow.values.length));
@@ -3979,7 +4275,17 @@ function WizardApp({
       return ['BOOTSTRAP', 'MODE', 'ARCADE'];
     }
 
-    return ['MODE', 'PROVIDER', activeHome.value === 'create-prd' ? 'CREATE' : 'PRDS', 'BACKLOG', 'RUNTIME', 'SCHEDULE', 'ITERATIONS', 'LAUNCH', 'ARCADE'];
+    return [
+      'MODE',
+      'PROVIDER',
+      activeHome.value === 'create-prd' ? 'CREATE' : activeHome.value === 'idea' ? 'IDEA' : 'PRDS',
+      'BACKLOG',
+      'RUNTIME',
+      'SCHEDULE',
+      'ITERATIONS',
+      'LAUNCH',
+      'ARCADE'
+    ];
   }, [activeHome.value, screen]);
 
   const activeTabIndex = (() => {
@@ -3992,6 +4298,7 @@ function WizardApp({
     if (
       screen === 'prds' ||
       screen === 'brief' ||
+      screen === 'idea-chat' ||
       screen === 'brief-created' ||
       (screen === 'skill-mode' && skillPicker?.context === 'create' && skillPicker.purpose === 'prd') ||
       (screen === 'skill-directory' && skillPicker?.context === 'create' && skillPicker.purpose === 'prd')
@@ -4069,7 +4376,7 @@ function WizardApp({
               </SectionPanel>
             ) : (
               <>
-                {!showSidebar ? (
+                {!showSidebar && screen !== 'idea-chat' ? (
                   <Box marginBottom={1}>
                     <HintLine>
                       {`${contextLabel(initial.projectContextMode)} · Provider ${activeProvider.value} · Schedule ${activeSchedule.value} · Queue ${selectedPrdPaths.length} PRDs`}
@@ -4417,10 +4724,64 @@ function WizardApp({
               </SectionPanel>
             )}
 
+            {screen === 'idea-chat' && (
+              <SectionPanel title="Idea chat" subtitle={ideaLoading ? 'SCOPING · THINKING' : 'SCOPING'} flexGrow={1}>
+                <Text color={palette.dim}>
+                  Keep the conversation focused on one feature initiative. When Ralphi has enough scope, it will create PRDs and move on automatically.
+                </Text>
+                <Box marginTop={1} flexDirection="column" flexGrow={1}>
+                  <HintLine>{ideaTranscriptWindow.start > 0 ? `↑ ${ideaTranscriptWindow.start} more above` : ' '}</HintLine>
+                  {ideaTranscriptWindow.values.length > 0 ? (
+                    ideaTranscriptWindow.values.map(line => (
+                      <Text
+                        key={line.key}
+                        color={
+                          line.role === 'user'
+                            ? palette.text
+                            : line.kind === 'status'
+                              ? palette.accentSoft
+                              : line.kind === 'summary'
+                                ? palette.accent
+                                : line.role === 'assistant'
+                                  ? palette.cyan
+                                  : palette.dim
+                        }
+                      >
+                        {line.text}
+                      </Text>
+                    ))
+                  ) : (
+                    <Text color={palette.dim}>Describe the feature you want to scope.</Text>
+                  )}
+                  <HintLine>{ideaTranscriptLinesBelow > 0 ? `↓ ${ideaTranscriptLinesBelow} more below` : ' '}</HintLine>
+                </Box>
+                <Box marginTop={1} flexDirection="column">
+                  {ideaStatusLines.map(line => (
+                    <HintLine key={line}>{line}</HintLine>
+                  ))}
+                  {ideaLoading ? <Spinner label={ideaLoadingLabel ?? 'Provider turn in progress'} /> : null}
+                </Box>
+                <Box marginTop={1} flexDirection="column">
+                  <Text color={ideaLoading ? palette.dim : palette.accent}>{ideaLoading ? 'Reply (disabled while thinking)' : 'Reply'}</Text>
+                  <Box borderStyle="round" borderColor={ideaLoading ? palette.borderSoft : palette.border} paddingX={1} flexDirection="column">
+                    {textareaWindow(ideaInput || ' ', ideaComposerVisibleRows).values.map((line, index) => (
+                      <Text key={`idea-input-${index}`} color={ideaLoading ? palette.dim : palette.text}>
+                        {line || ' '}
+                      </Text>
+                    ))}
+                  </Box>
+                </Box>
+                <Box marginTop={1} flexDirection="column">
+                  <HintLine>Enter sends. Shift+Enter adds a new line.</HintLine>
+                  <HintLine>↑ ↓ scroll transcript. Left arrow returns to provider setup when idle.</HintLine>
+                </Box>
+              </SectionPanel>
+            )}
+
             {screen === 'skill-mode' && skillPicker && (
               <SectionPanel
                 title={skillPicker.purpose === 'prd' ? 'Select PRD skill' : 'Select backlog skill'}
-                subtitle={skillPicker.context === 'create' ? 'SKILL STEP' : 'BACKLOG SETUP'}
+                subtitle={skillPicker.context === 'create' ? 'SKILL STEP' : skillPicker.context === 'idea' ? 'IDEA HANDOFF' : 'BACKLOG SETUP'}
                 flexGrow={1}
               >
                 <Text color={palette.dim}>
@@ -4495,7 +4856,7 @@ function WizardApp({
                 <Box flexDirection="column">
                   {createdDrafts.map(draft => (
                     <Text key={draft.path} color={palette.text}>
-                      {`• ${path.basename(draft.path)} · PRD ${draft.prdSkillName} · Backlog ${draft.backlogSkillName}`}
+                      {`• ${path.basename(draft.path)} · PRD ${draft.prdSkillName}${draft.backlogSkillName ? ` · Backlog ${draft.backlogSkillName}` : ''}`}
                     </Text>
                   ))}
                 </Box>
@@ -4752,7 +5113,7 @@ function WizardApp({
                 <Box marginTop={1} flexDirection="column">
                   <HintLine>Space opens the selection action or removes a run-only skill. `V` previews SKILL.md.</HintLine>
                   <HintLine>
-                    {`Enter continues to ${activeHome.value === 'create-prd' ? 'the PRD brief editor' : 'PRD selection'}. Left arrow returns to provider choice.`}
+                    {`Enter continues to ${activeHome.value === 'create-prd' ? 'the PRD brief editor' : activeHome.value === 'idea' ? 'Idea chat' : 'PRD selection'}. Left arrow returns to provider choice.`}
                   </HintLine>
                 </Box>
               </SectionPanel>

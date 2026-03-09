@@ -23,6 +23,8 @@ export interface SkillRegistrySnapshot {
   skills: DiscoveredSkill[];
 }
 
+const INTERNAL_SKILL_DIRNAME = '_internal';
+
 interface SkillSearchRoot {
   dir: string;
   provider: SkillProvider;
@@ -39,15 +41,24 @@ export function builtinSkillFile(skillName: string): string {
   return path.join(localRalphiSkillDir(), skillName, 'SKILL.md');
 }
 
-async function collectSkillFiles(dir: string): Promise<string[]> {
+export function internalBuiltinSkillFile(skillName: string): string {
+  return path.join(localRalphiSkillDir(), INTERNAL_SKILL_DIRNAME, skillName, 'SKILL.md');
+}
+
+async function collectSkillFiles(dir: string, options?: { includeInternal?: boolean }): Promise<string[]> {
   const entries = await readdir(dir, { withFileTypes: true });
   const files: string[] = [];
+  const includeInternal = options?.includeInternal ?? false;
 
   for (const entry of entries) {
+    if (!includeInternal && entry.isDirectory() && entry.name === INTERNAL_SKILL_DIRNAME) {
+      continue;
+    }
+
     const fullPath = path.join(dir, entry.name);
 
     if (entry.isDirectory()) {
-      files.push(...(await collectSkillFiles(fullPath)));
+      files.push(...(await collectSkillFiles(fullPath, options)));
       continue;
     }
 

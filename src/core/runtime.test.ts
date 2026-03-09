@@ -728,6 +728,79 @@ test('runRalphi pauses when the configured token budget is exhausted', async () 
   }
 });
 
+test('runRalphi pauses at the next safe checkpoint when requested by the user', async () => {
+  const fixture = await createTempProject('ralphi-runtime-');
+  const previousPath = process.env.PATH;
+
+  try {
+    const releasePrd = path.join(fixture.rootDir, 'docs', 'prds', 'release.json');
+    const binDir = path.join(fixture.rootDir, 'bin');
+
+    await writeFile(path.join(fixture.rootDir, 'README.md'), '# Fixture repository\n', 'utf8');
+    await writeJsonFile(releasePrd, {
+      branchName: 'feature/release',
+      userStories: [
+        {
+          id: 'US-001',
+          title: 'Ship the release flow',
+          description: 'Deliver the release flow.',
+          acceptanceCriteria: ['Create release artifacts'],
+          passes: false
+        }
+      ]
+    });
+    await writeFakeCodex(binDir);
+
+    await runGitOk(fixture.rootDir, ['init', '-b', 'main']);
+    await runGitOk(fixture.rootDir, ['config', 'user.name', 'Ralphi Test']);
+    await runGitOk(fixture.rootDir, ['config', 'user.email', 'ralphi@example.com']);
+    await runGitOk(fixture.rootDir, ['add', '.']);
+    await runGitOk(fixture.rootDir, ['commit', '-m', 'chore: seed fixture']);
+
+    process.env.PATH = previousPath ? `${binDir}${path.delimiter}${previousPath}` : binDir;
+
+    const config = makeConfig(fixture.rootDir, {
+      tool: 'codex',
+      plans: [
+        makePlan(releasePrd, {
+          id: 'release',
+          title: 'release',
+          branchName: 'feature/release',
+          iterations: 3
+        })
+      ],
+      maxIterations: 3,
+      schedule: 'per-prd',
+      workspaceStrategy: 'shared'
+    });
+
+    let pauseRequested = false;
+    const summary = await runRalphi(
+      config,
+      async event => {
+        if (event.type === 'iteration-start' && event.prdIteration === 1) {
+          pauseRequested = true;
+        }
+      },
+      {
+        shouldPause: () => pauseRequested
+      }
+    );
+    const pendingSession = await loadPendingRunSession(fixture.ralphDir);
+
+    assert.equal(summary.completed, false);
+    assert.equal(summary.pauseReason?.code, 'user_request');
+    assert.match(summary.pauseReason?.message ?? '', /safe checkpoint/);
+    assert.equal(summary.contexts[0]?.iterationsRun, 1);
+    assert.equal(summary.contexts[0]?.lastStep, 'Paused at safe checkpoint');
+    assert.equal(summary.contexts[0]?.status, 'queued');
+    assert.equal(pendingSession?.status, 'running');
+  } finally {
+    process.env.PATH = previousPath;
+    await fixture.cleanup();
+  }
+});
+
 test('runRalphi resumes after a token budget pause when a new budget starts from current usage', async () => {
   const fixture = await createTempProject('ralphi-runtime-');
   const previousPath = process.env.PATH;

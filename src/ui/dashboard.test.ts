@@ -434,6 +434,45 @@ test('dashboardReducer surfaces token-limit pauses with the explicit reason', as
   }
 });
 
+test('dashboardReducer surfaces user-requested pauses with the explicit reason', async () => {
+  const fixture = await createTempProject('ralphi-dashboard-');
+
+  try {
+    const config = makeConfig(fixture.rootDir);
+    const context = makeContextSnapshot(config, {
+      done: true,
+      status: 'queued',
+      iterationsRun: 1,
+      iterationsTarget: 3,
+      lastStep: 'Paused at safe checkpoint'
+    });
+    const summary = makeRunSummary([context], {
+      completed: false,
+      pauseReason: {
+        code: 'user_request',
+        message: 'Paused by user request at a safe checkpoint; resume from the saved checkpoint when you are ready'
+      },
+      usageTotals: makeUsageTotals(),
+      contexts: [context]
+    });
+
+    const next = dashboardReducer(createInitialDashboardState(), {
+      type: 'summary',
+      summary
+    });
+
+    assert.equal(next.phase, 'done');
+    assert.equal(next.activeStep, 'Paused on request');
+    assert.equal(
+      buildSummaryPauseReason(summary),
+      'Paused by user request at a safe checkpoint; resume from the saved checkpoint when you are ready'
+    );
+    assert.match(next.notifications[0]?.body ?? '', /Paused by user request at a safe checkpoint; resume from the saved checkpoint when you are ready\./);
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
 test('pause reason helpers explain iteration limits for unfinished contexts', async () => {
   const fixture = await createTempProject('ralphi-dashboard-');
 

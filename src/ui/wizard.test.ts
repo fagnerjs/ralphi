@@ -5,6 +5,7 @@ import { screenBlocksCharacterShortcuts } from './wizard.js';
 
 test('screenBlocksCharacterShortcuts blocks global character shortcuts in text entry screens only', () => {
   assert.equal(screenBlocksCharacterShortcuts('brief'), true);
+  assert.equal(screenBlocksCharacterShortcuts('idea-chat'), true);
   assert.equal(screenBlocksCharacterShortcuts('prd-edit'), true);
   assert.equal(screenBlocksCharacterShortcuts('backlog-edit'), true);
   assert.equal(screenBlocksCharacterShortcuts('skill-input'), true);

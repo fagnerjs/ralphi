@@ -1,0 +1,49 @@
+{
+  "version": 1,
+  "defaults": {
+    "tool": "amp",
+    "schedule": "round-robin",
+    "verbose": false,
+    "workspaceStrategy": "worktree",
+    "iterations": 10,
+    "environment": "local"
+  },
+  "notifications": {
+    "events": {
+      "start": true,
+      "success": true,
+      "failure": true
+    },
+    "channels": {
+      "slack": {
+        "enabled": false,
+        "url": ""
+      },
+      "teams": {
+        "enabled": false,
+        "url": ""
+      },
+      "discord": {
+        "enabled": false,
+        "url": ""
+      },
+      "google-chat": {
+        "enabled": false,
+        "url": ""
+      },
+      "mattermost": {
+        "enabled": false,
+        "url": ""
+      },
+      "ntfy": {
+        "enabled": false,
+        "url": ""
+      },
+      "generic": {
+        "enabled": false,
+        "url": ""
+      }
+    }
+  },
+  "skills": []
+}

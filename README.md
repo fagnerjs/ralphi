@@ -69,7 +69,7 @@ ralphi
 
 4. Choose the provider you want to use.
 5. Optional: open **Notifications** and add any webhook destinations you want.
-6. Select existing PRDs or create a new one from a short brief.
+6. Select existing PRDs, create a new one from a short brief, or start in Idea mode.
 7. Review the generated backlog.
 8. If you selected more than one PRD, add any PRD dependencies you want before launch.
 9. Choose schedule, workspace, and environment settings.
@@ -104,11 +104,13 @@ What you can do without leaving the dashboard:
 
 - choose PRDs interactively
 - create a PRD from a short brief
+- scope a feature in Idea mode and let Ralphi create one or more PRDs for you
 - review and adjust the backlog before launch
 - link PRD dependencies without memorizing extra commands
 - switch between local and devcontainer execution
 - configure webhook notifications for start, success, and failure events
 - watch progress and notifications in one place
+- pause an active run from the dashboard and resume later from the saved checkpoint
 - resume or restart saved work from the same interface
 - keep the final summary, usage totals, and next actions together at the end
 
@@ -119,6 +121,7 @@ Why it works well in practice:
 - Ralphi consumes the full configured PRD pass budget unless a blocking error stops the run. If implementation finishes early, the remaining passes are used for verification, regression checks, polish, and documentation updates.
 - If the iteration budget ends before the PRD is truly done, Ralphi pauses the run and tells you work is still pending instead of marking it complete.
 - You can add a full-run token budget before launch; when the run reaches it, Ralphi pauses and lets you abort, continue with a fresh limit, or continue without limits.
+- While a run is active, press `P` to pause at the next safe checkpoint without losing the saved session state.
 - While you are typing in a title, description, or other text field, character shortcuts stay inside the editor so your text is not interrupted.
 
 Typical dashboard flow:
@@ -126,7 +129,7 @@ Typical dashboard flow:
 1. Open Ralphi with `ralphi`.
 2. Pick the provider you want to use.
 3. Optional: open **Notifications** and configure your webhook destinations.
-4. Select one or more PRDs from `docs/prds/`, or create a new one from a short brief.
+4. Select one or more PRDs from `docs/prds/`, create a new one from a short brief, or start in Idea mode.
 5. Review and adjust the generated backlog.
 6. If you selected multiple PRDs, define any dependencies between them.
 7. Choose schedule, iterations, an optional full-run token budget, workspace preferences, and execution environment.

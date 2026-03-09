@@ -535,6 +535,10 @@ function buildRunCompletionStatus(summary: RalphRunSummary): string {
     return 'Token limit reached';
   }
 
+  if (summary.pauseReason?.code === 'user_request') {
+    return 'Paused on request';
+  }
+
   const pendingContexts = summary.contexts.filter(context => !isContextComplete(context));
   if (pendingContexts.length === 1) {
     const pendingContext = pendingContexts[0];
@@ -968,7 +972,9 @@ function DashboardApp({ config, onExit }: { config: RalphConfig; onExit: (result
   const [actionMessage, setActionMessage] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [arcadeOpen, setArcadeOpen] = useState(false);
+  const [pauseRequested, setPauseRequested] = useState(false);
   const queueRef = useRef<RalphEvent[]>([]);
+  const pauseRequestedRef = useRef(false);
   const summaryRef = useRef<RalphRunSummary | null>(null);
   const { columns, rows } = useTerminalViewport();
   const frameColumns = Math.max(60, columns - 4);
@@ -997,12 +1003,21 @@ function DashboardApp({ config, onExit }: { config: RalphConfig; onExit: (result
       });
     }, 50);
 
-    void runRalphi(config, event => {
-      queueRef.current.push(event);
-      if (event.type === 'summary') {
-        summaryRef.current = event.summary;
+    pauseRequestedRef.current = false;
+    setPauseRequested(false);
+
+    void runRalphi(
+      config,
+      event => {
+        queueRef.current.push(event);
+        if (event.type === 'summary') {
+          summaryRef.current = event.summary;
+        }
+      },
+      {
+        shouldPause: () => pauseRequestedRef.current
       }
-    })
+    )
       .then(summary => {
         summaryRef.current = summary;
       })
@@ -1107,7 +1122,7 @@ function DashboardApp({ config, onExit }: { config: RalphConfig; onExit: (result
       return [];
     }
 
-    const pauseReason = buildContextPauseReason(activeContext) ?? (!resolvedSummary.completed ? resolvedSummary.pauseReason?.message ?? null : null);
+    const pauseReason = !resolvedSummary.completed ? resolvedSummary.pauseReason?.message ?? buildContextPauseReason(activeContext) : buildContextPauseReason(activeContext);
     return [
       { label: 'Stories', value: activeContext.storyProgress },
       { label: 'Backlog', value: activeContext.backlogProgress },
@@ -1472,11 +1487,26 @@ function DashboardApp({ config, onExit }: { config: RalphConfig; onExit: (result
       return;
     }
 
+    if (input === 'p' || input === 'P') {
+      if (!pauseRequestedRef.current) {
+        pauseRequestedRef.current = true;
+        setPauseRequested(true);
+        dispatch({
+          type: 'boot-log',
+          level: 'info',
+          message: 'Pause requested. Ralphi will pause at the next safe checkpoint.'
+        });
+      }
+      return;
+    }
+
     if (input === 'q' || input === 'Q') {
       dispatch({
         type: 'boot-log',
         level: 'info',
-        message: 'Use Ctrl+C if you need to interrupt the live run.'
+        message: pauseRequestedRef.current
+          ? 'Pause is already queued. Use Ctrl+C only if you need to interrupt immediately.'
+          : 'Press P to pause at the next safe checkpoint, or use Ctrl+C to interrupt the live run.'
       });
     }
   });
@@ -1931,7 +1961,8 @@ function DashboardApp({ config, onExit }: { config: RalphConfig; onExit: (result
                   </>
                 ) : (
                   <>
-                    <HintLine>Press q for a reminder while the run is active.</HintLine>
+                    <HintLine>{pauseRequested ? 'Pause requested. Ralphi will stop at the next safe checkpoint.' : 'Press P to pause at the next safe checkpoint.'}</HintLine>
+                    <HintLine>Press q for interruption help while the run is active.</HintLine>
                     <HintLine>Wait for the summary before creating PRs or closing agent dashboards.</HintLine>
                   </>
                 )}

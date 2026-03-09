@@ -537,7 +537,7 @@ export async function listBuiltinSkills(): Promise<Array<{ name: string; targetD
   const entries = await readdir(skillDir, { withFileTypes: true }).catch(() => []);
   const skills = await Promise.all(
     entries
-      .filter(entry => entry.isDirectory())
+      .filter(entry => entry.isDirectory() && entry.name !== '_internal')
       .map(async entry => {
         const targetDir = path.join(skillDir, entry.name);
         const frontmatter = await readSkillFrontmatter(targetDir).catch(() => ({

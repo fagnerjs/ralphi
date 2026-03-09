@@ -138,11 +138,15 @@ export interface RalphTokenBudget {
   baselineTokens: number;
 }
 
-export type RalphRunPauseReasonCode = 'token_limit';
+export type RalphRunPauseReasonCode = 'token_limit' | 'user_request';
 
 export interface RalphRunPauseReason {
   code: RalphRunPauseReasonCode;
   message: string;
+}
+
+export interface RalphRunControl {
+  shouldPause?: () => boolean;
 }
 
 export interface DoctorCheck {
