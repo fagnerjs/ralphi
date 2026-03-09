@@ -115,6 +115,26 @@ test('formatContextIterations explains when a PRD completed before the configure
   }
 });
 
+test('completedEarly preserves done PRDs after resuming a queued run', async () => {
+  const fixture = await createTempProject('ralphi-dashboard-');
+
+  try {
+    const config = makeConfig(fixture.rootDir);
+    const context = makeContextSnapshot(config, {
+      done: true,
+      status: 'queued',
+      iterationsRun: 2,
+      iterationsTarget: 4
+    });
+
+    assert.equal(completedEarly(context), true);
+    assert.equal(formatContextIterations(context), '2/4 used · completed early');
+    assert.equal(buildContextPauseReason(context), null);
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
 test('dashboardReducer turns error boot logs into actionable notifications', async () => {
   const fixture = await createTempProject('ralphi-dashboard-');
 

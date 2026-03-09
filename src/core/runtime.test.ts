@@ -17,6 +17,7 @@ import {
 } from './runtime.js';
 import { createTempProject, makeBacklogSnapshot, makeConfig, makePlan, writeExecutable } from '../test-support.js';
 import { gitBranchExists, runGitCommand } from './git.js';
+import { loadContextCheckpoint, loadPendingRunSession } from './session.js';
 import { pathExists, writeJsonFile } from './utils.js';
 
 async function runGitOk(rootDir: string, args: string[]): Promise<string> {
@@ -499,6 +500,98 @@ test('runRalphi consumes the full configured iteration budget before marking a P
 
     const progressLog = await readFile(summary.contexts[0].progressFilePath, 'utf8');
     assert.equal((progressLog.match(/^- Completed release\.json on /gm) ?? []).length, 3);
+  } finally {
+    process.env.PATH = previousPath;
+    await fixture.cleanup();
+  }
+});
+
+
+test('runRalphi resumes a done-early PRD from checkpoint without losing completion state', async () => {
+  const fixture = await createTempProject('ralphi-runtime-');
+  const previousPath = process.env.PATH;
+
+  try {
+    const releasePrd = path.join(fixture.rootDir, 'docs', 'prds', 'release.json');
+    const binDir = path.join(fixture.rootDir, 'bin');
+
+    await writeFile(path.join(fixture.rootDir, 'README.md'), '# Fixture repository\n', 'utf8');
+    await writeJsonFile(releasePrd, {
+      branchName: 'feature/release',
+      userStories: [
+        {
+          id: 'US-001',
+          title: 'Ship the release flow',
+          description: 'Deliver the release flow.',
+          acceptanceCriteria: ['Create release artifacts'],
+          passes: false
+        }
+      ]
+    });
+    await writeFakeCodex(binDir);
+
+    await runGitOk(fixture.rootDir, ['init', '-b', 'main']);
+    await runGitOk(fixture.rootDir, ['config', 'user.name', 'Ralphi Test']);
+    await runGitOk(fixture.rootDir, ['config', 'user.email', 'ralphi@example.com']);
+    await runGitOk(fixture.rootDir, ['add', '.']);
+    await runGitOk(fixture.rootDir, ['commit', '-m', 'chore: seed fixture']);
+
+    process.env.PATH = previousPath ? `${binDir}${path.delimiter}${previousPath}` : binDir;
+
+    const config = makeConfig(fixture.rootDir, {
+      tool: 'codex',
+      plans: [
+        makePlan(releasePrd, {
+          id: 'release',
+          title: 'release',
+          branchName: 'feature/release',
+          iterations: 3
+        })
+      ],
+      maxIterations: 3,
+      schedule: 'round-robin',
+      workspaceStrategy: 'shared'
+    });
+
+    await assert.rejects(
+      () =>
+        runRalphi(config, async event => {
+          if (event.type === 'wave-start' && event.wave === 2) {
+            throw new Error('Simulated interruption after the first completed pass.');
+          }
+        }),
+      /Simulated interruption after the first completed pass\./
+    );
+
+    const pendingSession = await loadPendingRunSession(fixture.ralphDir);
+    const checkpointPaths = resolvePlanStatePaths(fixture.ralphDir, releasePrd, config.plans[0]?.stateKey);
+    const checkpoint = await loadContextCheckpoint(checkpointPaths.runDir);
+
+    assert.equal(pendingSession?.status, 'running');
+    assert.equal(checkpoint?.done, true);
+    assert.equal(checkpoint?.status, 'queued');
+    assert.equal(checkpoint?.iterationsRun, 1);
+    assert.equal(checkpoint?.iterationHistory.length, 1);
+
+    const resumedEvents: Array<Record<string, unknown>> = [];
+    const summary = await runRalphi(config, async event => {
+      resumedEvents.push(event as Record<string, unknown>);
+    });
+
+    const preparedEvent = resumedEvents.find(event => event.type === 'prepared');
+    const resumedIterations = resumedEvents
+      .filter(event => event.type === 'iteration-start')
+      .map(event => event.prdIteration);
+
+    assert.equal((preparedEvent as { contexts?: Array<{ done?: boolean; iterationsRun?: number; status?: string }> } | undefined)?.contexts?.[0]?.done, true);
+    assert.equal((preparedEvent as { contexts?: Array<{ done?: boolean; iterationsRun?: number; status?: string }> } | undefined)?.contexts?.[0]?.iterationsRun, 1);
+    assert.equal((preparedEvent as { contexts?: Array<{ done?: boolean; iterationsRun?: number; status?: string }> } | undefined)?.contexts?.[0]?.status, 'queued');
+    assert.deepEqual(resumedIterations, [2, 3]);
+    assert.equal(summary.completed, true);
+    assert.equal(summary.contexts[0]?.done, true);
+    assert.equal(summary.contexts[0]?.iterationsRun, 3);
+    assert.equal(summary.contexts[0]?.iterationHistory.length, 3);
+    assert.equal(await loadPendingRunSession(fixture.ralphDir), null);
   } finally {
     process.env.PATH = previousPath;
     await fixture.cleanup();

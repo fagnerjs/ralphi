@@ -441,8 +441,12 @@ function formatPassBudgetStatus(): string {
   return 'All configured passes used';
 }
 
+function isContextDone(context: RalphContextSnapshot | null | undefined): boolean {
+  return Boolean(context && (context.done || context.status === 'complete'));
+}
+
 export function buildContextPauseReason(context: RalphContextSnapshot | null | undefined): string | null {
-  if (!context || isContextComplete(context)) {
+  if (!context || isContextDone(context)) {
     return null;
   }
 
@@ -493,7 +497,7 @@ export function buildSummaryPauseReason(summary: RalphRunSummary): string | null
 }
 
 export function completedEarly(context: RalphContextSnapshot | null | undefined): boolean {
-  if (!context || !isContextComplete(context)) {
+  if (!context || !isContextDone(context)) {
     return false;
   }
 
@@ -827,7 +831,7 @@ export function dashboardReducer(state: DashboardState, action: DashboardAction)
 }
 
 function statusBadge(context: RalphContextSnapshot): { color: 'green' | 'yellow' | 'red' | 'blue'; label: string } {
-  if (isContextComplete(context)) {
+  if (isContextDone(context)) {
     return { color: 'green', label: completedEarly(context) ? 'done early' : 'done' };
   }
 
@@ -847,7 +851,7 @@ function isContextComplete(context: RalphContextSnapshot): boolean {
 }
 
 function contextProgressValue(context: RalphContextSnapshot): number {
-  if (isContextComplete(context)) {
+  if (isContextDone(context)) {
     return 100;
   }
 
@@ -955,7 +959,7 @@ function DashboardApp({ config, onExit }: { config: RalphConfig; onExit: (result
   }, [visibleContexts.length]);
 
   const activeContext = selectedPane === 0 ? null : visibleContexts[selectedPane - 1] ?? null;
-  const completedCount = state.contexts.filter(isContextComplete).length;
+  const completedCount = state.contexts.filter(isContextDone).length;
   const overallProgress = state.contexts.length === 0 ? 0 : Math.round((completedCount / state.contexts.length) * 100);
   const latestNotification = state.notifications[state.notifications.length - 1] ?? null;
   const tabs = ['OVERVIEW', ...visibleContexts.map(context => truncateEnd(context.title, 16)), 'ARCADE'];
@@ -1040,7 +1044,7 @@ function DashboardApp({ config, onExit }: { config: RalphConfig; onExit: (result
       ? activeContext.mcpServers.map(server => `${server.name}:${server.state}`).join(', ')
       : null;
   const checklistStatus =
-    activeContext && isContextComplete(activeContext)
+    activeContext && isContextDone(activeContext)
       ? backlogStatusBadge('done')
       : activeItem
         ? backlogStatusBadge(activeItem.status)

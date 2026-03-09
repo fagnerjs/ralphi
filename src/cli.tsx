@@ -482,9 +482,10 @@ async function runPlain(config: RalphConfig): Promise<RalphRunSummary> {
           console.log(event.line);
         }
         break;
-      case 'iteration-finish':
+      case 'iteration-finish': {
+        const completionLabel = event.completed ? 'complete' : event.context.done ? 'done' : 'pending';
         console.log(
-          `[done] ${displayPath(event.context.sourcePrd, config.rootDir)} :: ${event.completed ? 'complete' : 'pending'} :: ${event.context.backlogProgress} :: exit ${event.exitCode} :: ${event.lineCount} lines :: ${(event.durationMs / 1000).toFixed(1)}s`
+          `[done] ${displayPath(event.context.sourcePrd, config.rootDir)} :: ${completionLabel} :: ${event.context.backlogProgress} :: exit ${event.exitCode} :: ${event.lineCount} lines :: ${(event.durationMs / 1000).toFixed(1)}s`
         );
         console.log(`[log] ${displayPath(event.logPath, config.rootDir)} :: last step ${event.step}`);
         const latestIteration = event.context.iterationHistory[event.context.iterationHistory.length - 1];
@@ -504,6 +505,7 @@ async function runPlain(config: RalphConfig): Promise<RalphRunSummary> {
           }
         }
         break;
+      }
       case 'summary':
         console.log(
           `[notification] Execution ${event.summary.completed ? 'finished' : 'paused'} :: ${event.summary.contexts.filter(context => context.done).length}/${event.summary.contexts.length} PRDs complete`
